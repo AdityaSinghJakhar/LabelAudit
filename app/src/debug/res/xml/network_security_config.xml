@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug builds only. The local backend is served over plain HTTP, reached
+  either through `adb reverse tcp:8000 tcp:8000` or directly over the LAN.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -22,6 +22,12 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Interactive API docs: http://localhost:8000/docs
 
+To let an attached Android device reach the server:
+
+```
+adb reverse tcp:8000 tcp:8000
+```
+
 ## Endpoints
 
 | Method | Path          | Purpose        |
