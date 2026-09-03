@@ -19,12 +19,25 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Works on both emulator and physical device once the backend port is
-        // forwarded with: adb reverse tcp:8000 tcp:8000
-        // Override for a LAN backend with: -PapiBaseUrl=http://192.168.x.x:8000/
-        val apiBaseUrl = (project.findProperty("apiBaseUrl") as String?)
-            ?: "http://127.0.0.1:8000/"
-        buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+        // Candidate backend addresses, tried in order at runtime; the first
+        // one that answers /api/health is used for the rest of the session.
+        //   - a LAN address works untethered over Wi-Fi
+        //   - 127.0.0.1 works when forwarded: adb reverse tcp:8000 tcp:8000
+        //   - 10.0.2.2 is the host loopback as seen from the emulator
+        // Override the whole list with:
+        //   -PapiBaseUrl=http://192.168.1.20:8000/
+        val candidates = (project.findProperty("apiBaseUrl") as String?)
+            ?.split(",")
+            ?: listOf(
+                "http://10.194.102.96:8000/",
+                "http://127.0.0.1:8000/",
+                "http://10.0.2.2:8000/",
+            )
+        buildConfigField(
+            "String",
+            "API_BASE_URLS",
+            "\"${candidates.joinToString(",") { it.trim() }}\""
+        )
     }
 
     buildTypes {
