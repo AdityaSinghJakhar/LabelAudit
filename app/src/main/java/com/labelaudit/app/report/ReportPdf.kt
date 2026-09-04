@@ -72,7 +72,7 @@ object ReportPdf {
         }
 
         // ---- header
-        canvas.drawText("Label Compliance Report", MARGIN, y + 14f, title)
+        canvas.drawText("Label Guard — Compliance Report", MARGIN, y + 14f, title)
         y += 30f
         canvas.drawText("Verdict: ${report.verdict}", MARGIN, y, heading)
         y += 14f
@@ -163,6 +163,17 @@ object ReportPdf {
                     MARGIN, y, CONTENT_WIDTH, body
                 )
                 y += 4f
+            }
+        }
+
+        // ---- everything OCR returned, so a disputed finding can be checked
+        if (report.rawLines.isNotEmpty()) {
+            newPageIfNeeded(60f)
+            canvas.drawText("What the scanner read", MARGIN, y, heading)
+            y += 14f
+            for (line in report.rawLines) {
+                newPageIfNeeded(12f)
+                y = drawWrapped(canvas, line, MARGIN, y, CONTENT_WIDTH, small)
             }
         }
 

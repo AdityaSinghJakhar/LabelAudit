@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "LabelAudit"
+rootProject.name = "LabelGuard"
 include(":app")
  

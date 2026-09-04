@@ -346,7 +346,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             _exportStatus.value = "Writing PDF…"
             try {
                 val file = withContext(Dispatchers.IO) {
-                    ReportPdf.write(getApplication(), report, reportFile("label-report"))
+                    ReportPdf.write(getApplication(), report, reportFile("labelguard-report"))
                 }
                 _exported.value = ExportedPdf(
                     file,
