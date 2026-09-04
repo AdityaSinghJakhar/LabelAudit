@@ -45,7 +45,7 @@ class RuleFieldConsistencyTest {
 
     @Test
     fun `the manufacturer rule names the field the extractor produces`() {
-        val rule = ruleset.rules.first { it.id == "LG-MFR-01" }
+        val rule = ruleset.rules.first { it.id == "MFR-01" }
 
         // Naming "addresses" left a PASSing row with no read value, no
         // agreement and no evidence crop.
@@ -63,7 +63,7 @@ class RuleFieldConsistencyTest {
             registry = ruleset.registry.copy(populated = true),
             rules = listOf(
                 Ruleset.Rule(
-                    id = "LG-TEST-NOFIELD",
+                    id = "TEST-NOFIELD",
                     field = "nutrition_panel",
                     check = Ruleset.Check(type = "field_present"),
                     citation = "test citation"
@@ -71,7 +71,7 @@ class RuleFieldConsistencyTest {
             )
         )
         val evaluation = RulesEngine.evaluate(invented, mapOf("mrp" to field("45.00")))
-        val finding = evaluation.findings.first { it.ruleId == "LG-TEST-NOFIELD" }
+        val finding = evaluation.findings.first { it.ruleId == "TEST-NOFIELD" }
 
         assertEquals(RuleStatus.NOT_APPLICABLE, finding.status)
         assertEquals("field_not_extractable", finding.reason)
@@ -82,7 +82,7 @@ class RuleFieldConsistencyTest {
     fun `an extractable field that is genuinely absent still fails`() {
         // The guard must not turn every absence into NOT_ASSESSABLE.
         val evaluation = RulesEngine.evaluate(ruleset, emptyMap())
-        val mrp = evaluation.findings.first { it.ruleId == "LG-MRP-01" }
+        val mrp = evaluation.findings.first { it.ruleId == "MRP-01" }
 
         assertEquals(RuleStatus.FAIL, mrp.status)
     }
@@ -90,7 +90,7 @@ class RuleFieldConsistencyTest {
     @Test
     fun `a finding with no observation claims no confidence`() {
         val evaluation = RulesEngine.evaluate(ruleset, emptyMap())
-        val mrp = evaluation.findings.first { it.ruleId == "LG-MRP-01" }
+        val mrp = evaluation.findings.first { it.ruleId == "MRP-01" }
 
         // Defaulting to 1f claimed maximum certainty for a finding backed by
         // no evidence at all.
@@ -103,7 +103,7 @@ class RuleFieldConsistencyTest {
             ruleset,
             mapOf("mrp" to Consensus.AgreedField("45.00", 0.6f, Box(0, 0, 5, 5), 3, 5))
         )
-        val mrp = evaluation.findings.first { it.ruleId == "LG-MRP-01" }
+        val mrp = evaluation.findings.first { it.ruleId == "MRP-01" }
 
         assertEquals(0.6f, mrp.confidence, 0.0001f)
     }

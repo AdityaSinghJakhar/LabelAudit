@@ -53,7 +53,7 @@ class RulesEngineTest {
             source_citation: "test"
             height_metric: cap_height
             rules:
-              - id: LG-BAD
+              - id: BAD
                 field: mrp
                 check:
                   type: field_present
@@ -67,7 +67,7 @@ class RulesEngineTest {
     @Test
     fun `a finding requires a citation`() {
         assertThrows(IllegalArgumentException::class.java) {
-            Finding("LG-X", "", Box.EMPTY, 0.9f, RuleStatus.PASS, "mrp")
+            Finding("X", "", Box.EMPTY, 0.9f, RuleStatus.PASS, "mrp")
         }
     }
 
@@ -81,14 +81,14 @@ class RulesEngineTest {
     @Test
     fun `a not assessable finding requires a reason`() {
         assertThrows(IllegalArgumentException::class.java) {
-            Finding("LG-X", "cite", Box.EMPTY, 0.5f, RuleStatus.NOT_ASSESSABLE, "mrp")
+            Finding("X", "cite", Box.EMPTY, 0.5f, RuleStatus.NOT_ASSESSABLE, "mrp")
         }
     }
 
     @Test
     fun `confidence must be a probability`() {
         assertThrows(IllegalArgumentException::class.java) {
-            Finding("LG-X", "cite", Box.EMPTY, 1.4f, RuleStatus.PASS, "mrp")
+            Finding("X", "cite", Box.EMPTY, 1.4f, RuleStatus.PASS, "mrp")
         }
     }
 
@@ -115,7 +115,7 @@ class RulesEngineTest {
             ruleset,
             mapOf("mrp" to field("45.00"), "net_quantity" to field("8 g"))
         )
-        val care = findingFor(evaluation, "LG-CARE-01")
+        val care = findingFor(evaluation, "CARE-01")
 
         assertEquals(RuleStatus.EXEMPT, care.status)
         assertTrue(care.citation.contains("r. 26"))
@@ -128,14 +128,14 @@ class RulesEngineTest {
             ruleset,
             mapOf("mrp" to field("45.00"), "net_quantity" to field("500 g"))
         )
-        assertEquals(RuleStatus.FAIL, findingFor(evaluation, "LG-CARE-01").status)
+        assertEquals(RuleStatus.FAIL, findingFor(evaluation, "CARE-01").status)
     }
 
     @Test
     fun `an absent quantity does not grant an exemption`() {
         // A missing field must never be read as satisfying a condition.
         val evaluation = RulesEngine.evaluate(ruleset, mapOf("mrp" to field("45.00")))
-        assertNotEquals(RuleStatus.EXEMPT, findingFor(evaluation, "LG-CARE-01").status)
+        assertNotEquals(RuleStatus.EXEMPT, findingFor(evaluation, "CARE-01").status)
     }
 
     @Test
@@ -146,7 +146,7 @@ class RulesEngineTest {
         )
         // EX-SMALL-PACK-ML covers this, so it is still exempt — but via the
         // millilitre exemption, not the gram one.
-        val care = findingFor(evaluation, "LG-CARE-01")
+        val care = findingFor(evaluation, "CARE-01")
         assertEquals(RuleStatus.EXEMPT, care.status)
         assertEquals("EX-SMALL-PACK-ML", care.evidence["exemption_id"])
     }
@@ -156,7 +156,7 @@ class RulesEngineTest {
     @Test
     fun `an unpopulated registry yields not applicable rather than pass`() {
         val evaluation = RulesEngine.evaluate(ruleset, mapOf("mrp" to field("45.00")))
-        val check = findingFor(evaluation, "LG-MRP-02")
+        val check = findingFor(evaluation, "MRP-02")
 
         // Not NOT_ASSESSABLE: having no registered SKU is a fact about the
         // deployment, not about this photograph, and must not suppress
@@ -173,7 +173,7 @@ class RulesEngineTest {
             mapOf("mrp" to field("45.00"))   // nothing declares a net quantity
         )
 
-        assertEquals(RuleStatus.FAIL, findingFor(evaluation, "LG-QTY-01").status)
+        assertEquals(RuleStatus.FAIL, findingFor(evaluation, "QTY-01").status)
         assertEquals(Verdict.FAIL, evaluation.verdict)
     }
 
@@ -192,14 +192,14 @@ class RulesEngineTest {
 
     @Test
     fun `the height rule is deferred, so a scan is not permanently unassessable`() {
-        // LG-CAP-01 needs a millimetre scale, which the chips prototype has no
+        // CAP-01 needs a millimetre scale, which the chips prototype has no
         // practical way to provide. Left active it would report
         // height_not_measured on every scan, and since NOT_ASSESSABLE outranks
         // both PASS and FAIL, one permanently unmeasurable rule would suppress
         // every verdict the pipeline can legitimately reach.
         assertTrue(
-            "LG-CAP-01 is active again; confirm a scale source exists first",
-            ruleset.rules.none { it.id == "LG-CAP-01" }
+            "CAP-01 is active again; confirm a scale source exists first",
+            ruleset.rules.none { it.id == "CAP-01" }
         )
     }
 
@@ -247,12 +247,12 @@ class RulesEngineTest {
 
     @Test
     fun `the height check still works when a rule supplies a measurement`() {
-        // The check type stays covered so it is known-good whenever LG-CAP-01
+        // The check type stays covered so it is known-good whenever CAP-01
         // is restored alongside a scale source.
         val withHeightRule = ruleset.copy(
             rules = listOf(
                 Ruleset.Rule(
-                    id = "LG-TEST-HEIGHT",
+                    id = "TEST-HEIGHT",
                     field = "mrp",
                     check = Ruleset.Check(
                         type = "min_height_mm",
@@ -268,18 +268,18 @@ class RulesEngineTest {
             withHeightRule, mapOf("mrp" to field("45.00")),
             RulesEngine.Context(capHeightsMm = mapOf("mrp" to 3.0))
         )
-        assertEquals(RuleStatus.PASS, findingFor(tall, "LG-TEST-HEIGHT").status)
+        assertEquals(RuleStatus.PASS, findingFor(tall, "TEST-HEIGHT").status)
 
         val short = RulesEngine.evaluate(
             withHeightRule, mapOf("mrp" to field("45.00")),
             RulesEngine.Context(capHeightsMm = mapOf("mrp" to 1.0))
         )
-        assertEquals(RuleStatus.FAIL, findingFor(short, "LG-TEST-HEIGHT").status)
+        assertEquals(RuleStatus.FAIL, findingFor(short, "TEST-HEIGHT").status)
 
         val unmeasured = RulesEngine.evaluate(
             withHeightRule, mapOf("mrp" to field("45.00"))
         )
-        val finding = findingFor(unmeasured, "LG-TEST-HEIGHT")
+        val finding = findingFor(unmeasured, "TEST-HEIGHT")
         assertEquals(RuleStatus.NOT_ASSESSABLE, finding.status)
         assertEquals("height_not_measured", finding.reason)
     }
@@ -289,7 +289,7 @@ class RulesEngineTest {
         val unconfirmed = ruleset.copy(
             rules = listOf(
                 Ruleset.Rule(
-                    id = "LG-TEST-UNCONFIRMED",
+                    id = "TEST-UNCONFIRMED",
                     field = "mrp",
                     check = Ruleset.Check(
                         type = "min_height_mm",
@@ -304,7 +304,7 @@ class RulesEngineTest {
             unconfirmed, mapOf("mrp" to field("45.00")),
             RulesEngine.Context(capHeightsMm = mapOf("mrp" to 0.5))
         )
-        val finding = findingFor(evaluation, "LG-TEST-UNCONFIRMED")
+        val finding = findingFor(evaluation, "TEST-UNCONFIRMED")
 
         // 0.5 mm is below the 2.0 mm minimum, yet nobody has confirmed that
         // minimum, so the engine must not assert a violation.
@@ -324,7 +324,7 @@ class RulesEngineTest {
                 )
             )
         )
-        val mfr = findingFor(evaluation, "LG-MFR-01")
+        val mfr = findingFor(evaluation, "MFR-01")
 
         assertEquals(RuleStatus.NEEDS_REVIEW, mfr.status)
         assertNotEquals(RuleStatus.PASS, mfr.status)
@@ -342,7 +342,7 @@ class RulesEngineTest {
                 )
             )
         )
-        assertEquals(RuleStatus.PASS, findingFor(evaluation, "LG-MFR-01").status)
+        assertEquals(RuleStatus.PASS, findingFor(evaluation, "MFR-01").status)
     }
 
     @Test
@@ -351,7 +351,7 @@ class RulesEngineTest {
             ruleset,
             mapOf("mrp" to field("45.00"), "net_quantity" to field("500 g"))
         )
-        assertEquals(RuleStatus.FAIL, findingFor(evaluation, "LG-MFR-01").status)
+        assertEquals(RuleStatus.FAIL, findingFor(evaluation, "MFR-01").status)
     }
 
     @Test
@@ -365,10 +365,10 @@ class RulesEngineTest {
         )
 
         val matching = RulesEngine.evaluate(populated, mapOf("mrp" to field("45.00")))
-        assertEquals(RuleStatus.PASS, findingFor(matching, "LG-MRP-02").status)
+        assertEquals(RuleStatus.PASS, findingFor(matching, "MRP-02").status)
 
         val mismatched = RulesEngine.evaluate(populated, mapOf("mrp" to field("61.00")))
-        assertEquals(RuleStatus.FAIL, findingFor(mismatched, "LG-MRP-02").status)
+        assertEquals(RuleStatus.FAIL, findingFor(mismatched, "MRP-02").status)
     }
 
     @Test
@@ -381,12 +381,12 @@ class RulesEngineTest {
             populated,
             mapOf("net_quantity" to field("0.5 kg"))
         )
-        assertEquals(RuleStatus.PASS, findingFor(evaluation, "LG-QTY-02").status)
+        assertEquals(RuleStatus.PASS, findingFor(evaluation, "QTY-02").status)
     }
 
     // ------------------------------------------------------------- verdicts
 
-    private fun finding(status: RuleStatus, id: String = "LG-X") = Finding(
+    private fun finding(status: RuleStatus, id: String = "X") = Finding(
         ruleId = id,
         citation = "cite",
         cropBox = Box.EMPTY,
@@ -406,7 +406,7 @@ class RulesEngineTest {
         assertEquals(
             Verdict.PASS,
             RulesEngine.deriveVerdict(
-                listOf(finding(RuleStatus.PASS), finding(RuleStatus.EXEMPT, "LG-Y"))
+                listOf(finding(RuleStatus.PASS), finding(RuleStatus.EXEMPT, "Y"))
             )
         )
     }
@@ -416,7 +416,7 @@ class RulesEngineTest {
         assertEquals(
             Verdict.FAIL,
             RulesEngine.deriveVerdict(
-                listOf(finding(RuleStatus.PASS), finding(RuleStatus.FAIL, "LG-Y"))
+                listOf(finding(RuleStatus.PASS), finding(RuleStatus.FAIL, "Y"))
             )
         )
     }
@@ -428,8 +428,8 @@ class RulesEngineTest {
             Verdict.NOT_ASSESSABLE,
             RulesEngine.deriveVerdict(
                 listOf(
-                    finding(RuleStatus.FAIL, "LG-Y"),
-                    finding(RuleStatus.NOT_ASSESSABLE, "LG-Z")
+                    finding(RuleStatus.FAIL, "Y"),
+                    finding(RuleStatus.NOT_ASSESSABLE, "Z")
                 )
             )
         )
@@ -440,7 +440,7 @@ class RulesEngineTest {
         assertEquals(
             Verdict.NEEDS_REVIEW,
             RulesEngine.deriveVerdict(
-                listOf(finding(RuleStatus.PASS), finding(RuleStatus.NEEDS_REVIEW, "LG-Y"))
+                listOf(finding(RuleStatus.PASS), finding(RuleStatus.NEEDS_REVIEW, "Y"))
             )
         )
     }

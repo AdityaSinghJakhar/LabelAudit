@@ -87,7 +87,7 @@ class TaxWordingTest {
 
         assertEquals(
             RuleStatus.PASS,
-            evaluation.findings.first { it.ruleId == "LG-MRP-03" }.status
+            evaluation.findings.first { it.ruleId == "TAX-01" }.status
         )
     }
 
@@ -105,8 +105,8 @@ class TaxWordingTest {
     @Test
     fun `the two price rules are named distinctly`() {
         val ruleset = Ruleset.load(File("src/main/assets/ruleset.yaml").inputStream())
-        val presence = ruleset.rules.first { it.id == "LG-MRP-01" }
-        val registry = ruleset.rules.first { it.id == "LG-MRP-02" }
+        val presence = ruleset.rules.first { it.id == "MRP-01" }
+        val registry = ruleset.rules.first { it.id == "MRP-02" }
 
         // They share a clause, so only the names distinguish them.
         assertEquals(presence.citation.take(60), registry.citation.take(60))

@@ -144,14 +144,14 @@ class SkuRecordTest {
 
         val matching = com.labelaudit.app.pipeline.RulesEngine.evaluate(
             applied, mapOf("mrp" to field("140"))
-        ).findings.first { it.ruleId == "LG-MRP-02" }
+        ).findings.first { it.ruleId == "MRP-02" }
         assertEquals(com.labelaudit.app.pipeline.RuleStatus.PASS, matching.status)
 
         // An overprinted price is now a substantiated violation rather than an
         // inapplicable check.
         val overprinted = com.labelaudit.app.pipeline.RulesEngine.evaluate(
             applied, mapOf("mrp" to field("999"))
-        ).findings.first { it.ruleId == "LG-MRP-02" }
+        ).findings.first { it.ruleId == "MRP-02" }
         assertEquals(com.labelaudit.app.pipeline.RuleStatus.FAIL, overprinted.status)
     }
 

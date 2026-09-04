@@ -102,7 +102,7 @@ class FssaiTest {
 
         assertEquals(
             RuleStatus.PASS,
-            evaluation.findings.first { it.ruleId == "LG-FSSAI-01" }.status
+            evaluation.findings.first { it.ruleId == "FSSAI-01" }.status
         )
     }
 }

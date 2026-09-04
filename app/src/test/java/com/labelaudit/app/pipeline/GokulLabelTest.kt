@@ -74,12 +74,12 @@ class GokulLabelTest {
     @Test
     fun `the tax-inclusive wording is found`() {
         assertNotNull(FieldExtractor.extract(gokulLines())["tax_inclusive"])
-        assertEquals(RuleStatus.PASS, statusOf("LG-MRP-03").status)
+        assertEquals(RuleStatus.PASS, statusOf("TAX-01").status)
     }
 
     @Test
     fun `consumer care is found`() {
-        assertEquals(RuleStatus.PASS, statusOf("LG-CARE-01").status)
+        assertEquals(RuleStatus.PASS, statusOf("CARE-01").status)
     }
 
     // ------------------------------------------- what the pack leaves blank
@@ -98,7 +98,7 @@ class GokulLabelTest {
 
     @Test
     fun `the missing manufacturing date fails`() {
-        val finding = statusOf("LG-DATE-01")
+        val finding = statusOf("MFG-01")
 
         assertEquals(RuleStatus.FAIL, finding.status)
         assertTrue(
@@ -111,7 +111,7 @@ class GokulLabelTest {
 
     @Test
     fun `the missing batch number fails`() {
-        val finding = statusOf("LG-BATCH-01")
+        val finding = statusOf("BATCH-01")
 
         assertEquals(RuleStatus.FAIL, finding.status)
         assertTrue(finding.message.contains("no value follows"))
@@ -122,7 +122,7 @@ class GokulLabelTest {
         // "BEST BEFORE 2 MONTHS FROM THE DATE OF PACKING" counts from a date
         // this pack leaves blank, so a consumer can determine no date at all.
         // A date marking nobody can resolve is not a date marking.
-        val finding = statusOf("LG-EXPIRY-01")
+        val finding = statusOf("EXPIRY-01")
 
         assertEquals(RuleStatus.FAIL, finding.status)
         assertTrue(
@@ -147,7 +147,7 @@ class GokulLabelTest {
 
         assertEquals(
             RuleStatus.PASS,
-            evaluation.findings.first { it.ruleId == "LG-EXPIRY-01" }.status
+            evaluation.findings.first { it.ruleId == "EXPIRY-01" }.status
         )
     }
 
@@ -155,7 +155,7 @@ class GokulLabelTest {
     fun `the FSSAI licence is missing from this crop`() {
         // The licence number is cut off in the photographed area, so the rule
         // must report it as absent rather than inventing one.
-        assertEquals(RuleStatus.FAIL, statusOf("LG-FSSAI-01").status)
+        assertEquals(RuleStatus.FAIL, statusOf("FSSAI-01").status)
     }
 
     // -------------------------------------------------------- the verdict
@@ -173,7 +173,7 @@ class GokulLabelTest {
         val failures = evaluation.violations.map { it.ruleId }.toSet()
         assertTrue(
             "expected date and batch violations, got $failures",
-            failures.containsAll(setOf("LG-DATE-01", "LG-BATCH-01"))
+            failures.containsAll(setOf("MFG-01", "BATCH-01"))
         )
     }
 
@@ -203,8 +203,8 @@ class GokulLabelTest {
         // are asserted as violations rather than passed over.
         assertNotEquals(Verdict.PASS, evaluation.verdict)
         val failures = evaluation.violations.map { it.ruleId }.toSet()
-        assertTrue(failures.contains("LG-DATE-01"))
-        assertTrue(failures.contains("LG-BATCH-01"))
+        assertTrue(failures.contains("MFG-01"))
+        assertTrue(failures.contains("BATCH-01"))
     }
 
     // ------------------------------------------- a populated pack still passes
@@ -233,7 +233,7 @@ class GokulLabelTest {
             )
         )
 
-        for (id in listOf("LG-DATE-01", "LG-BATCH-01", "LG-EXPIRY-01", "LG-FSSAI-01")) {
+        for (id in listOf("MFG-01", "BATCH-01", "EXPIRY-01", "FSSAI-01")) {
             assertEquals(
                 "$id should pass on a fully declared pack",
                 RuleStatus.PASS,
