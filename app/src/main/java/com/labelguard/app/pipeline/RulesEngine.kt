@@ -1,5 +1,6 @@
 package com.labelguard.app.pipeline
 
+import com.labelguard.app.measure.Scale
 import java.time.LocalDate
 
 /**
@@ -23,12 +24,25 @@ object RulesEngine {
     /**
      * Evidence available to the checks beyond the agreed field values.
      *
-     * [capHeightsMm] is empty until a marker is in shot, so height rules
-     * report NOT_ASSESSABLE rather than guessing a millimetre figure.
+     * [capHeights] is empty when the device could not supply usable optics,
+     * so height rules report NOT_ASSESSABLE rather than guessing a millimetre
+     * figure. Each entry is a range, not a number — see [Scale].
      */
     data class Context(
         val addressRoles: Map<FieldExtractor.AddressRole, List<String>> = emptyMap(),
-        val capHeightsMm: Map<String, Double> = emptyMap(),
+        val capHeights: Map<String, Scale.Measurement> = emptyMap(),
+        /**
+         * Why this device cannot measure character height at all, if it
+         * cannot.
+         *
+         * The distinction matters as much here as it does for the registry. A
+         * phone that does not report usable optics makes the height rules
+         * NOT_APPLICABLE — a fact about the equipment, which must not suppress
+         * a verdict the rest of the pipeline reached. A phone that can measure
+         * but produced no box for this field is NOT_ASSESSABLE, a fact about
+         * the photograph, and that genuinely does leave the pack unassessed.
+         */
+        val heightScaleUnavailable: String? = null,
         /**
          * The day the scan is judged against, injected rather than read from
          * the clock so date findings are reproducible — a test that depended
@@ -486,11 +500,34 @@ object RulesEngine {
         return Outcome(RuleStatus.FAIL, "No address declared for role '$role'")
     }
 
+    /**
+     * Printed character height against a statutory minimum.
+     *
+     * The measurement is a range, because the scale it rests on comes from
+     * the phone's reported focus distance rather than a ruler. A violation is
+     * asserted only when the entire range falls short; a range that straddles
+     * the threshold is a question this photograph did not answer.
+     *
+     * Two separate gates hold this back from asserting anything at all:
+     * `needs_legal_confirmation` on the threshold, and `needs_calibration` on
+     * the tolerance the range is built from. While either stands, the finding
+     * is capped at NEEDS_REVIEW — the measurement is reported and a person
+     * decides. Neither an unverified statutory figure nor an unvalidated
+     * device tolerance may produce an accusation on its own.
+     */
     private fun checkMinHeight(rule: Ruleset.Rule, context: Context): Outcome {
-        val measured = context.capHeightsMm[rule.field]
-            ?: return Outcome(
+        val measured = context.capHeights[rule.field] ?: return context
+            .heightScaleUnavailable
+            ?.let {
+                Outcome(
+                    RuleStatus.NOT_APPLICABLE,
+                    "Character height cannot be measured because " + it,
+                    "height_scale_unavailable"
+                )
+            }
+            ?: Outcome(
                 RuleStatus.NOT_ASSESSABLE,
-                "No cap-height measurement for ${rule.field}",
+                "No character box was read for " + rule.field,
                 "height_not_measured"
             )
 
@@ -501,20 +538,34 @@ object RulesEngine {
                 "threshold_unconfigured"
             )
 
-        if (rule.check.needsLegalConfirmation) {
-            // The threshold is a placeholder. Report the measurement, but do
-            // not assert a violation against a number nobody has confirmed.
+        val unconfirmed = buildList {
+            if (rule.check.needsLegalConfirmation) add("the statutory minimum is unverified")
+            if (rule.check.needsCalibration) add("the measurement tolerance is unvalidated")
+        }
+
+        if (unconfirmed.isNotEmpty()) {
             return Outcome(
                 RuleStatus.NEEDS_REVIEW,
-                "Measured %.2f mm against unconfirmed minimum %.2f mm"
-                    .format(measured, minMm)
+                "Measured ${measured.describe()} against a minimum of " +
+                    "%.2f mm. Reported for review because ".format(minMm) +
+                    unconfirmed.joinToString(" and ") + "."
             )
         }
 
-        return if (measured >= minMm) {
-            Outcome(RuleStatus.PASS, "Height %.2f mm meets %.2f mm".format(measured, minMm))
-        } else {
-            Outcome(RuleStatus.FAIL, "Height %.2f mm is below %.2f mm".format(measured, minMm))
+        return when {
+            measured.certainlyAtLeast(minMm) -> Outcome(
+                RuleStatus.PASS,
+                "Measured ${measured.describe()}, at or above %.2f mm".format(minMm)
+            )
+            measured.certainlyBelow(minMm) -> Outcome(
+                RuleStatus.FAIL,
+                "Measured ${measured.describe()}, entirely below %.2f mm".format(minMm)
+            )
+            else -> Outcome(
+                RuleStatus.NEEDS_REVIEW,
+                "Measured ${measured.describe()}, which spans the %.2f mm "
+                    .format(minMm) + "minimum; the photograph cannot settle it"
+            )
         }
     }
 
@@ -523,9 +574,10 @@ object RulesEngine {
     /**
      * Collapse findings to one verdict, worst-first.
      *
-     * NOT_ASSESSABLE outranks FAIL: if any rule could not be assessed, the
-     * package as a whole was not fully assessed, and reporting FAIL would
-     * claim more certainty than the evidence supports.
+     * FAIL outranks NOT_ASSESSABLE: a violation the pipeline substantiated
+     * stays substantiated even though some other check could not run. The
+     * report names what went unassessed so the verdict is not read as a
+     * complete audit.
      */
     fun deriveVerdict(findings: List<Finding>): Verdict {
         if (findings.isEmpty()) return Verdict.NOT_ASSESSABLE

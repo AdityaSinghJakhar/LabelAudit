@@ -50,6 +50,13 @@ data class Ruleset(
         val role: String? = null,
         val minMm: Double? = null,
         val needsLegalConfirmation: Boolean = false,
+
+        /**
+         * The device tolerance the measurement range is built from has not
+         * been validated against real handsets. While true, a height rule may
+         * only report, never accuse.
+         */
+        val needsCalibration: Boolean = false,
         /**
          * For date_marking: the field a relative period counts from. Without
          * it declared, the period yields no date.
@@ -132,6 +139,8 @@ data class Ruleset(
                             minMm = (params["min_mm"] as? Number)?.toDouble(),
                             needsLegalConfirmation =
                                 params["needs_legal_confirmation"] as? Boolean ?: false,
+                            needsCalibration =
+                                params["needs_calibration"] as? Boolean ?: false,
                             relativeRequires = check["relative_requires"]?.toString(),
                             afterField = check["after_field"]?.toString()
                         ),

@@ -13,6 +13,11 @@ class RulesEngineTest {
     private val ruleset: Ruleset =
         Ruleset.load(File("src/main/assets/ruleset.yaml").inputStream())
 
+    private fun measured(minMm: Double, maxMm: Double) =
+        com.labelguard.app.measure.Scale.Measurement(
+            minMm, maxMm, com.labelguard.app.measure.Scale.Source.REPORTED_OPTICS
+        )
+
     private fun field(value: String, agreement: Int = 5, frames: Int = 5) =
         Consensus.AgreedField(
             value = value,
@@ -191,15 +196,39 @@ class RulesEngineTest {
     }
 
     @Test
-    fun `the height rule is deferred, so a scan is not permanently unassessable`() {
-        // CAP-01 needs a millimetre scale, which the chips prototype has no
-        // practical way to provide. Left active it would report
-        // height_not_measured on every scan, and since NOT_ASSESSABLE outranks
-        // both PASS and FAIL, one permanently unmeasurable rule would suppress
-        // every verdict the pipeline can legitimately reach.
+    fun `a device that cannot measure does not make every scan unassessable`() {
+        // CAP-01 was deferred for exactly this reason while no scale existed.
+        // Now that the optics supply one, the rule is live — but a phone that
+        // reports no usable focus distance still must not suppress verdicts
+        // the rest of the pipeline reached. That is NOT_APPLICABLE, a fact
+        // about the equipment, not NOT_ASSESSABLE, a fact about the photo.
+        val evaluation = RulesEngine.evaluate(
+            ruleset,
+            mapOf("mrp" to field("45.00")),
+            RulesEngine.Context(
+                heightScaleUnavailable = "this device reports its focus distance as uncalibrated"
+            )
+        )
+
+        val height = evaluation.findings.first { it.ruleId == "CAP-01" }
+        assertEquals(RuleStatus.NOT_APPLICABLE, height.status)
         assertTrue(
-            "CAP-01 is active again; confirm a scale source exists first",
-            ruleset.rules.none { it.id == "CAP-01" }
+            "the reason must reach the reader: " + height.message,
+            height.message.contains("uncalibrated")
+        )
+    }
+
+    @Test
+    fun `a measurable device with no box for the field is not assessable`() {
+        val evaluation = RulesEngine.evaluate(
+            ruleset,
+            emptyMap(),
+            RulesEngine.Context(heightScaleUnavailable = null)
+        )
+
+        assertEquals(
+            RuleStatus.NOT_ASSESSABLE,
+            evaluation.findings.first { it.ruleId == "CAP-01" }.status
         )
     }
 
@@ -235,16 +264,65 @@ class RulesEngineTest {
                 ),
                 // Pinned: this fixture declares dates, and judging them
                 // against the real clock would make the test expire.
-                today = java.time.LocalDate.of(2026, 7, 1)
+                today = java.time.LocalDate.of(2026, 7, 1),
+                // Comfortably above the 1 mm placeholder, though CAP-01 and
+                // CAP-02 still only reach NEEDS_REVIEW while their threshold
+                // and tolerance are unconfirmed.
+                capHeights = mapOf(
+                    "mrp" to measured(2.8, 3.2),
+                    "net_quantity" to measured(2.8, 3.2)
+                )
             )
         )
 
-        assertEquals(Verdict.PASS, evaluation.verdict)
+        // The height rules report a measurement and defer to a human while
+        // their statutory threshold and device tolerance stay unconfirmed, so
+        // a fully compliant pack lands on NEEDS_REVIEW rather than PASS. That
+        // is the honest result: nothing here has failed, and nothing has been
+        // asserted against an unverified number either.
+        assertEquals(Verdict.NEEDS_REVIEW, evaluation.verdict)
+
+        val notPassing = evaluation.findings
+            .filter { it.status != RuleStatus.PASS }
+            .map { it.ruleId to it.status }
+        assertEquals(
+            "only the two height rules may be unresolved, got " + notPassing,
+            setOf("CAP-01", "CAP-02"),
+            notPassing.map { it.first }.toSet()
+        )
         assertTrue(
-            "expected every check to pass, got " +
-                evaluation.findings.filter { it.status != RuleStatus.PASS }
-                    .map { it.ruleId to it.status },
-            evaluation.findings.all { it.status == RuleStatus.PASS }
+            "no check may fail on a compliant pack: " + notPassing,
+            evaluation.findings.none { it.status == RuleStatus.FAIL }
+        )
+    }
+
+    @Test
+    fun `a measurement spanning the threshold settles nothing`() {
+        // The whole reason a measurement is a range. 1.7-2.4 mm against a
+        // 2 mm minimum is not a violation and not a pass; asserting either
+        // would claim precision the optics cannot deliver.
+        val withHeightRule = ruleset.copy(
+            rules = listOf(
+                Ruleset.Rule(
+                    id = "TEST-STRADDLE",
+                    field = "mrp",
+                    check = Ruleset.Check(type = "min_height_mm", minMm = 2.0),
+                    citation = "test",
+                    name = "straddle"
+                )
+            )
+        )
+
+        val finding = RulesEngine.evaluate(
+            withHeightRule,
+            mapOf("mrp" to field("45.00")),
+            RulesEngine.Context(capHeights = mapOf("mrp" to measured(1.7, 2.4)))
+        ).findings.first { it.ruleId == "TEST-STRADDLE" }
+
+        assertEquals(RuleStatus.NEEDS_REVIEW, finding.status)
+        assertTrue(
+            "the range must be visible to the reader: " + finding.message,
+            finding.message.contains("1.70") && finding.message.contains("2.40")
         )
     }
 
@@ -269,13 +347,13 @@ class RulesEngineTest {
 
         val tall = RulesEngine.evaluate(
             withHeightRule, mapOf("mrp" to field("45.00")),
-            RulesEngine.Context(capHeightsMm = mapOf("mrp" to 3.0))
+            RulesEngine.Context(capHeights = mapOf("mrp" to measured(2.9, 3.1)))
         )
         assertEquals(RuleStatus.PASS, findingFor(tall, "TEST-HEIGHT").status)
 
         val short = RulesEngine.evaluate(
             withHeightRule, mapOf("mrp" to field("45.00")),
-            RulesEngine.Context(capHeightsMm = mapOf("mrp" to 1.0))
+            RulesEngine.Context(capHeights = mapOf("mrp" to measured(0.8, 0.95)))
         )
         assertEquals(RuleStatus.FAIL, findingFor(short, "TEST-HEIGHT").status)
 
@@ -305,7 +383,7 @@ class RulesEngineTest {
         )
         val evaluation = RulesEngine.evaluate(
             unconfirmed, mapOf("mrp" to field("45.00")),
-            RulesEngine.Context(capHeightsMm = mapOf("mrp" to 0.5))
+            RulesEngine.Context(capHeights = mapOf("mrp" to measured(0.4, 0.6)))
         )
         val finding = findingFor(evaluation, "TEST-UNCONFIRMED")
 
@@ -488,7 +566,14 @@ class RulesEngineTest {
                 ),
                 // Pinned: this fixture declares dates, and judging them
                 // against the real clock would make the test expire.
-                today = java.time.LocalDate.of(2026, 7, 1)
+                today = java.time.LocalDate.of(2026, 7, 1),
+                // Comfortably above the 1 mm placeholder, though CAP-01 and
+                // CAP-02 still only reach NEEDS_REVIEW while their threshold
+                // and tolerance are unconfirmed.
+                capHeights = mapOf(
+                    "mrp" to measured(2.8, 3.2),
+                    "net_quantity" to measured(2.8, 3.2)
+                )
             )
         )
 

@@ -274,16 +274,44 @@ rules:
 # To restore: add a scale source, confirm the r. 9 table row for this SKU's net
 # quantity and panel area, set needs_legal_confirmation to false, and uncomment.
 #
-#  - id: CAP-01
-#    field: mrp
-#    check:
-#      type: min_height_mm
-#      params:
-#        min_mm: 1.0
-#        needs_legal_confirmation: true
-#    citation: >-
-#      Legal Metrology (Packaged Commodities) Rules, 2011, r. 9 — size of
-#      letters and numerals in a declaration.
+  - id: CAP-01
+    name: "Price is printed large enough to read"
+    field: mrp
+    check:
+      type: min_height_mm
+      params:
+        # TWO unverified numbers stand between this rule and an accusation.
+        #
+        # min_mm is a placeholder. Rule 9 sizes characters against the area of
+        # the principal display panel, and that table has not been transcribed
+        # or checked by a legal reviewer.
+        #
+        # needs_calibration says the measurement's own tolerance — how far a
+        # phone's reported focus distance may be off — is assumed rather than
+        # measured. See Scale.TOLERANCE_APPROXIMATE.
+        #
+        # While either flag stands the rule reports its measurement and asks
+        # for review. It cannot fail a pack on an unverified threshold or an
+        # unvalidated tolerance.
+        min_mm: 1.0
+        needs_legal_confirmation: true
+        needs_calibration: true
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 9 — size of
+      letters and numerals in a declaration.
+
+  - id: CAP-02
+    name: "Net quantity is printed large enough to read"
+    field: net_quantity
+    check:
+      type: min_height_mm
+      params:
+        min_mm: 1.0
+        needs_legal_confirmation: true
+        needs_calibration: true
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 9 — size of
+      letters and numerals in a declaration.
 
 # -----------------------------------------------------------------------------
 # Registry — the single in-scope SKU.
