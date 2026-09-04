@@ -17,7 +17,7 @@
 #   `citation` strings as provisional until that review happens.
 #
 #   Where a rule depends on a numeric threshold drawn from a statutory table
-#   (notably LG-CAP-01, which reads Rule 9's size table), the threshold is
+#   (notably CAP-01, which reads Rule 9's size table), the threshold is
 #   carried in `params` and marked `needs_legal_confirmation: true`. Those
 #   rules emit NEEDS_REVIEW rather than FAIL until the value is confirmed —
 #   the engine must never assert a violation it cannot substantiate.
@@ -49,7 +49,7 @@ exemptions:
       value: 10
       unit: g
     exempts:
-      - LG-CARE-01
+      - CARE-01
     citation: >-
       Legal Metrology (Packaged Commodities) Rules, 2011, r. 26 — exemption for
       packages containing a commodity of net weight or measure of 10 g or 10 ml
@@ -62,7 +62,7 @@ exemptions:
       value: 10
       unit: ml
     exempts:
-      - LG-CARE-01
+      - CARE-01
     citation: >-
       Legal Metrology (Packaged Commodities) Rules, 2011, r. 26 — exemption for
       packages containing a commodity of net weight or measure of 10 g or 10 ml
@@ -78,7 +78,7 @@ exemptions:
 #   min_height_mm     — measured cap height >= params.min_mm
 # -----------------------------------------------------------------------------
 rules:
-  - id: LG-MRP-01
+  - id: MRP-01
     name: "Price is declared"
     field: mrp
     check:
@@ -87,7 +87,7 @@ rules:
       Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(e) — retail
       sale price of the package.
 
-  - id: LG-MRP-02
+  - id: MRP-02
     name: "Price matches the registered value"
     field: mrp
     check:
@@ -98,7 +98,7 @@ rules:
       declared retail sale price must be the maximum retail price for the
       package as registered.
 
-  - id: LG-QTY-01
+  - id: QTY-01
     name: "Net quantity is declared"
     field: net_quantity
     check:
@@ -107,7 +107,7 @@ rules:
       Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(c) — net
       quantity in terms of standard unit of weight or measure.
 
-  - id: LG-QTY-02
+  - id: QTY-02
     name: "Net quantity matches the registered pack size"
     field: net_quantity
     check:
@@ -117,7 +117,7 @@ rules:
       Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(c) — declared
       net quantity must correspond to the registered pack size.
 
-  - id: LG-BRAND-01
+  - id: BRAND-01
     name: "Brand matches the registered name"
     field: brand
     check:
@@ -127,7 +127,7 @@ rules:
       Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(b) — common
       or generic name of the commodity contained in the package.
 
-  - id: LG-MFR-01
+  - id: MFR-01
     name: "Manufacturer address is declared"
     # Must name a field the extractor actually produces, otherwise the finding
     # carries no observed value, no agreement and no evidence crop.
@@ -140,7 +140,7 @@ rules:
       complete address of the manufacturer, or of the packer or importer where
       the manufacturer is not the packer.
 
-  - id: LG-CARE-01
+  - id: CARE-01
     name: "Consumer care details are declared"
     field: consumer_care
     check:
@@ -150,7 +150,7 @@ rules:
       address, telephone number and email address of the person who can be
       contacted in case of consumer complaints.
 
-  - id: LG-MRP-03
+  - id: TAX-01
     name: "Price is stated as inclusive of all taxes"
     field: tax_inclusive
     check:
@@ -160,7 +160,7 @@ rules:
       r. 6(1)(e) — the retail sale price must be declared as the maximum price
       inclusive of all taxes.
 
-  - id: LG-DATE-01
+  - id: MFG-01
     name: "Manufacturing or packing date is declared"
     field: mfg_date
     check:
@@ -170,7 +170,7 @@ rules:
       month and year in which the commodity is manufactured, pre-packed or
       imported.
 
-  - id: LG-BATCH-01
+  - id: BATCH-01
     name: "Batch or lot number is declared"
     field: batch_number
     check:
@@ -179,7 +179,7 @@ rules:
       Food Safety and Standards (Labelling and Display) Regulations, 2020,
       reg. 5 — lot, code or batch identification of the pre-packaged food.
 
-  - id: LG-EXPIRY-01
+  - id: EXPIRY-01
     name: "Date marking a consumer can resolve"
     field: expiry
     check:
@@ -194,7 +194,7 @@ rules:
       reg. 5 — date marking: "best before" or "use by" as applicable to the
       food.
 
-  - id: LG-FSSAI-01
+  - id: FSSAI-01
     name: "FSSAI licence number is displayed"
     field: fssai_licence
     check:
@@ -204,7 +204,7 @@ rules:
       Businesses) Regulations, 2011 — the FSSAI licence or registration number
       of the food business operator shall be displayed on the label.
 
-# DEFERRED — LG-CAP-01 (text height, r. 9)
+# DEFERRED — CAP-01 (text height, r. 9)
 #
 # Disabled for the first prototype, which targets a nitrogen-flushed chips
 # pack. Two independent blockers:
@@ -224,7 +224,7 @@ rules:
 # To restore: add a scale source, confirm the r. 9 table row for this SKU's net
 # quantity and panel area, set needs_legal_confirmation to false, and uncomment.
 #
-#  - id: LG-CAP-01
+#  - id: CAP-01
 #    field: mrp
 #    check:
 #      type: min_height_mm
