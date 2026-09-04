@@ -67,8 +67,27 @@ data class Ruleset(
         val afterField: String? = null
     )
 
+    /**
+     * How much weight the registered values can carry.
+     *
+     * A comparison is only ever as good as the thing compared against. A
+     * reference supplied by the brand or the regulator can substantiate a
+     * violation; one somebody read off a pack with this app cannot, however
+     * carefully they read it, because nothing established that pack was
+     * correct in the first place. Recording which kind is in use is what
+     * stops the second quietly acquiring the authority of the first.
+     */
+    enum class Authority {
+        /** From a product master supplied by a brand or an authority. */
+        AUTHORITATIVE,
+
+        /** Someone with the app said so. */
+        ASSERTED
+    }
+
     data class Registry(
         val populated: Boolean,
+        val authority: Authority = Authority.ASSERTED,
         val skuId: String?,
         val brandStrings: List<String>,
         val addresses: Map<String, String?>,
@@ -159,6 +178,11 @@ data class Ruleset(
 
             val registry = Registry(
                 populated = registryRaw["populated"] as? Boolean ?: false,
+                authority = if (registryRaw["authoritative"] as? Boolean == true) {
+                    Authority.AUTHORITATIVE
+                } else {
+                    Authority.ASSERTED
+                },
                 skuId = registryRaw["sku_id"]?.toString(),
                 brandStrings = (registryRaw["brand_strings"] as? List<Any?> ?: emptyList())
                     .map { it.toString() },

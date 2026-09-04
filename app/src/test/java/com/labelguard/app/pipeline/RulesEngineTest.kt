@@ -435,21 +435,76 @@ class RulesEngineTest {
         assertEquals(RuleStatus.FAIL, findingFor(evaluation, "MFR-01").status)
     }
 
-    @Test
-    fun `a populated registry can match and mismatch`() {
-        val populated = ruleset.copy(
-            registry = ruleset.registry.copy(
-                populated = true,
-                mrpExact = 45.0,
-                netQuantity = "500 g"
-            )
+    private fun populatedRegistry(authority: Ruleset.Authority) = ruleset.copy(
+        registry = ruleset.registry.copy(
+            populated = true,
+            authority = authority,
+            mrpExact = 45.0,
+            netQuantity = "500 g"
         )
+    )
 
-        val matching = RulesEngine.evaluate(populated, mapOf("mrp" to field("45.00")))
-        assertEquals(RuleStatus.PASS, findingFor(matching, "MRP-02").status)
+    @Test
+    fun `a matching pack passes whatever the reference's provenance`() {
+        for (authority in Ruleset.Authority.entries) {
+            val evaluation = RulesEngine.evaluate(
+                populatedRegistry(authority),
+                mapOf("mrp" to field("45.00"))
+            )
+            assertEquals(
+                "matching should pass under " + authority,
+                RuleStatus.PASS,
+                findingFor(evaluation, "MRP-02").status
+            )
+        }
+    }
 
-        val mismatched = RulesEngine.evaluate(populated, mapOf("mrp" to field("61.00")))
-        assertEquals(RuleStatus.FAIL, findingFor(mismatched, "MRP-02").status)
+    @Test
+    fun `an authoritative reference can fail a mismatched pack`() {
+        val evaluation = RulesEngine.evaluate(
+            populatedRegistry(Ruleset.Authority.AUTHORITATIVE),
+            mapOf("mrp" to field("61.00"))
+        )
+        assertEquals(RuleStatus.FAIL, findingFor(evaluation, "MRP-02").status)
+    }
+
+    @Test
+    fun `an asserted reference cannot fail a mismatched pack`() {
+        // The reference was read off some other pack with this app. Nothing
+        // established that pack was correct, so a disagreement says one of the
+        // two is wrong without saying which. Failing the pack here would let
+        // whoever registered the reference decide what compliance means.
+        val evaluation = RulesEngine.evaluate(
+            populatedRegistry(Ruleset.Authority.ASSERTED),
+            mapOf("mrp" to field("61.00"))
+        )
+        val finding = findingFor(evaluation, "MRP-02")
+
+        assertEquals(RuleStatus.NEEDS_REVIEW, finding.status)
+        assertTrue(
+            "the reader must be told why it was not settled: " + finding.message,
+            finding.message.contains("authoritative")
+        )
+    }
+
+    @Test
+    fun `an asserted reference still shows both values`() {
+        val finding = findingFor(
+            RulesEngine.evaluate(
+                populatedRegistry(Ruleset.Authority.ASSERTED),
+                mapOf("mrp" to field("61.00"))
+            ),
+            "MRP-02"
+        )
+        assertTrue(finding.message.contains("61.00"))
+        assertTrue(finding.message.contains("45"))
+    }
+
+    @Test
+    fun `the shipped registry is not authoritative`() {
+        // A registry that arrived as ASSERTED must never default its way into
+        // failing packs.
+        assertEquals(Ruleset.Authority.ASSERTED, ruleset.registry.authority)
     }
 
     @Test

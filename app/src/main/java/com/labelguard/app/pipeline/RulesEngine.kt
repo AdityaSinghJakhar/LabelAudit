@@ -262,12 +262,25 @@ object RulesEngine {
         val candidates = if (expected is List<*>) expected else listOf(expected)
         val matched = candidates.any { Normalize.valuesEqual(rule.field, observed.value, it) }
 
-        return if (matched) {
-            Outcome(RuleStatus.PASS, "${rule.field} matches the registered value")
-        } else {
-            Outcome(
+        if (matched) {
+            return Outcome(RuleStatus.PASS, "${rule.field} matches the registered value")
+        }
+
+        // The pack and the reference disagree. Which of them is wrong depends
+        // entirely on where the reference came from: a brand's product master
+        // settles it, a value somebody read off another pack does not.
+        return when (ruleset.registry.authority) {
+            Ruleset.Authority.AUTHORITATIVE -> Outcome(
                 RuleStatus.FAIL,
                 "Label shows ${observed.value}; registered value is $expected"
+            )
+
+            Ruleset.Authority.ASSERTED -> Outcome(
+                RuleStatus.NEEDS_REVIEW,
+                "Label shows ${observed.value}; the registered reference says " +
+                    "$expected. That reference was recorded from a scanned " +
+                    "pack rather than an authoritative source, so which one is " +
+                    "wrong cannot be settled here."
             )
         }
     }
