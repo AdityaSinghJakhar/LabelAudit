@@ -5,6 +5,9 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.labelguard.app.history.HistoryCsv
+import com.labelguard.app.measure.CameraOptics
+import com.labelguard.app.measure.ImageSize
+import com.labelguard.app.measure.Scale
 import com.labelguard.app.history.HistoryStore
 import com.labelguard.app.history.ScanRecord
 import com.labelguard.app.ocr.OcrEngine
@@ -90,6 +93,13 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     private val ruleset: Ruleset by lazy {
         getApplication<Application>().assets.open("ruleset.yaml").use(Ruleset::load)
     }
+
+    /**
+     * Lens metadata for the live camera, shared with the capture screen.
+     * Empty until a camera binds, which is why height rules degrade to
+     * NOT_ASSESSABLE on a bulk upload rather than reporting a size.
+     */
+    val optics = CameraOptics()
 
     val skuStore = SkuStore(application)
 
@@ -257,7 +267,13 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         val evaluation = RulesEngine.evaluate(
             ruleset = matched?.let { Enrolment.applyTo(ruleset, it) } ?: ruleset,
             fields = merged.fields,
-            context = RulesEngine.Context(addressRoles = addressRoles(merged))
+            context = RulesEngine.Context(
+                addressRoles = addressRoles(merged),
+                capHeights = sides.firstOrNull()?.frames?.firstOrNull()
+                    ?.let { measureHeights(it, merged.fields) }
+                    .orEmpty(),
+                heightScaleUnavailable = optics.unavailableReason
+            )
         )
 
         lastScanFields = merged.fields
@@ -312,7 +328,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         val evaluation = RulesEngine.evaluate(
             ruleset = matched?.let { Enrolment.applyTo(ruleset, it) } ?: ruleset,
             fields = consensus.fields,
-            context = RulesEngine.Context(addressRoles = addressRoles(consensus))
+            context = RulesEngine.Context(
+                addressRoles = addressRoles(consensus),
+                capHeights = usableFrames.firstOrNull()
+                    ?.let { measureHeights(it, consensus.fields) }
+                    .orEmpty(),
+                // A bulk upload has no live camera, so nothing can be
+                // measured and the height rules do not apply to it.
+                heightScaleUnavailable = optics.unavailableReason
+                    ?: "these images were not captured by this device's camera"
+                        .takeIf { _bulk.value != null }
+            )
         )
 
         lastScanFields = consensus.fields
@@ -387,6 +413,41 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearBulk() {
         _bulk.value = null
+    }
+
+    /** Fields the ruleset asks a character height of. */
+    private val heightFields: List<String> by lazy {
+        ruleset.rules.filter { it.check.type == "min_height_mm" }.map { it.field }.distinct()
+    }
+
+    /**
+     * Character heights in millimetres, measured from the frame's own optics.
+     *
+     * Returns nothing at all when the device cannot supply a trustworthy
+     * scale. That is the correct outcome rather than a fallback estimate: a
+     * height rule with no measurement reports NOT_ASSESSABLE and says why,
+     * which is honest, whereas a guessed millimetre figure would look exactly
+     * like a real one on the report.
+     *
+     * The pixel height comes from the word-level box the extractor already
+     * prefers, so a price is measured on its numerals rather than across the
+     * whole "MRP Rs. 45.00" line. Two known biases remain, both toward
+     * over-measuring and therefore toward PASS: the box carries a little
+     * padding, and a tilted shot makes an axis-aligned box taller than the
+     * characters in it. Erring toward PASS is the survivable direction.
+     */
+    private fun measureHeights(
+        frame: File,
+        fields: Map<String, Consensus.AgreedField>
+    ): Map<String, Scale.Measurement> {
+        val size = ImageSize.of(frame) ?: return emptyMap()
+        val scale = optics.scaleFor(size.width, size.height) ?: return emptyMap()
+
+        return heightFields.mapNotNull { name ->
+            val field = fields[name] ?: return@mapNotNull null
+            if (field.anchorOnly || field.box.height <= 0) return@mapNotNull null
+            name to scale.toMm(field.box.height)
+        }.toMap()
     }
 
     /**

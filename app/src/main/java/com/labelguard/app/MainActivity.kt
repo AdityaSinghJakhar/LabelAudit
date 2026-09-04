@@ -134,6 +134,7 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
             else -> Box(modifier = Modifier.fillMaxSize()) {
                 CameraScreen(
                     onSidesCaptured = viewModel::scanSides,
+                    optics = viewModel.optics,
                     modifier = Modifier.padding(innerPadding)
                 )
 
