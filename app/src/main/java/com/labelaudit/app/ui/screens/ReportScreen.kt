@@ -16,9 +16,16 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.clickable
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -45,6 +52,7 @@ fun ReportScreen(
     onOpenPdf: (() -> Unit)? = null,
     onExportResults: (() -> Unit)? = null,
     onShareResults: (() -> Unit)? = null,
+    onEnrol: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -122,10 +130,16 @@ fun ReportScreen(
             }
         }
 
+        onEnrol?.let { enrol -> item { EnrolCard(report, enrol) } }
+
         items(report.fields, key = { it.field }) { group -> FieldCard(group) }
 
         if (report.unresolved.isNotEmpty()) {
             item { UnresolvedSection(report) }
+        }
+
+        if (report.rawLines.isNotEmpty()) {
+            item { RawTextSection(report) }
         }
 
         item { Provenance(report) }
@@ -174,6 +188,93 @@ private fun VerdictHeader(report: ScanReport) {
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.padding(top = 8.dp)
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Registering the scanned pack as the reference for a SKU.
+ *
+ * This is how the registry gets populated in practice: type every value by
+ * hand and you are reading the same label the app just read, which proves
+ * nothing. Enrolling from a pack you have already checked at least makes the
+ * claim explicit and attributable.
+ *
+ * The card states plainly that the app cannot verify the pack is compliant.
+ * It records who said so, not that it is true.
+ */
+@Composable
+private fun EnrolCard(report: ScanReport, onEnrol: (String) -> Unit) {
+    var skuId by remember { mutableStateOf("") }
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp)) {
+            report.matchedSkuId?.let { matched ->
+                Text(
+                    text = "Compared against registered SKU: $matched",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                report.referenceNote?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+                    )
+                }
+            }
+
+            if (report.matchedSkuId == null) {
+                Text(
+                    text = "No registered SKU matched this pack",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "Registry comparisons cannot run without a reference.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "Cancel" else "Register this pack as a reference")
+            }
+
+            if (expanded) {
+                Text(
+                    text = "Only do this for a pack you have checked yourself. " +
+                        "The app cannot tell whether it is compliant — it records " +
+                        "that you said so, and every later comparison inherits " +
+                        "any error in it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                OutlinedTextField(
+                    value = skuId,
+                    onValueChange = { skuId = it },
+                    label = { Text("SKU name, e.g. Gokul Namkeen 500g") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    onClick = {
+                        onEnrol(skuId.trim())
+                        expanded = false
+                        skuId = ""
+                    },
+                    enabled = skuId.isNotBlank(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                ) {
+                    Text("Save reference")
+                }
             }
         }
     }
@@ -322,6 +423,61 @@ private fun UnresolvedSection(report: ScanReport) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 6.dp)
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Everything OCR returned.
+ *
+ * A reader who sees a declaration marked missing that is visibly on the pack
+ * needs to know whether the text was read and not matched, or never read.
+ * Only the first tells them the rules need work; the second tells them to
+ * retake the photo.
+ */
+@Composable
+private fun RawTextSection(report: ScanReport) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "What the scanner read",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = if (expanded) "Hide" else "${report.rawLines.size} lines",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            if (expanded) {
+                Text(
+                    text = "If a declaration below is marked missing but appears " +
+                        "here, the rules need work. If it is not here at all, " +
+                        "the photo could not resolve it — retake it closer, " +
+                        "with the torch on.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 8.dp)
+                )
+                report.rawLines.forEach {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
             }
         }
     }
