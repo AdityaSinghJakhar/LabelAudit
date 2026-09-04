@@ -5,13 +5,13 @@ plugins {
 }
 
 android {
-    namespace = "com.labelaudit.app"
+    namespace = "com.labelguard.app"
     compileSdk {
         version = release(36)
     }
 
     defaultConfig {
-        applicationId = "com.labelaudit.app"
+        applicationId = "com.labelguard.app"
         minSdk = 28
         targetSdk = 36
         versionCode = 1
@@ -38,6 +38,14 @@ android {
             "API_BASE_URLS",
             "\"${candidates.joinToString(",") { it.trim() }}\""
         )
+
+        // OpenCV and ML Kit both ship native libraries per ABI, and shipping
+        // all four pushed the APK past 200 MB. x86/x86_64 exist only for
+        // emulators, so real devices are covered by the two ARM ABIs.
+        // Add x86_64 back if you need to run on an emulator.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
@@ -74,6 +82,7 @@ dependencies {
     implementation(libs.retrofit.kotlinx.serialization)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp.logging.interceptor)
+    implementation(libs.androidx.exifinterface)
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
@@ -81,6 +90,7 @@ dependencies {
     implementation(libs.accompanist.permissions)
     implementation(libs.mlkit.text.recognition)
     implementation(libs.mlkit.text.recognition.devanagari)
+    implementation(libs.snakeyaml)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
