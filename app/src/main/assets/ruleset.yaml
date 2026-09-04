@@ -170,6 +170,22 @@ rules:
       month and year in which the commodity is manufactured, pre-packed or
       imported.
 
+  - id: MFG-02
+    name: "Manufacturing date has actually passed"
+    field: mfg_date
+    check:
+      # An internal-consistency check on the declared value, not a separate
+      # statutory requirement: r. 6(1)(d) obliges the pack to declare the
+      # month and year of manufacture, and a month that has not arrived
+      # cannot be the month in which the commodity was manufactured. Asserted
+      # only when the earliest day the marking could mean is still ahead, so
+      # "12/2025" read during December 2025 is not a violation.
+      type: date_not_future
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(d) — the
+      month and year in which the commodity is manufactured, pre-packed or
+      imported.
+
   - id: BATCH-01
     name: "Batch or lot number is declared"
     field: batch_number
@@ -188,6 +204,40 @@ rules:
       # the consumer can determine no date and the marking fails on its own
       # terms.
       type: date_marking
+      relative_requires: mfg_date
+    citation: >-
+      Food Safety and Standards (Labelling and Display) Regulations, 2020,
+      reg. 5 — date marking: "best before" or "use by" as applicable to the
+      food.
+
+  - id: EXPIRY-02
+    name: "Date marking falls after the manufacturing date"
+    field: expiry
+    check:
+      # Two declarations on the same pack that contradict each other. Only
+      # asserted when the ranges cannot overlap; where they do, the order
+      # cannot be settled from the label and the finding is NEEDS_REVIEW.
+      type: date_order
+      after_field: mfg_date
+    citation: >-
+      Food Safety and Standards (Labelling and Display) Regulations, 2020,
+      reg. 5 — date marking: "best before" or "use by" as applicable to the
+      food.
+
+  - id: EXPIRY-03
+    name: "Pack is within its declared date marking"
+    field: expiry
+    check:
+      # Resolves a relative marking ("best before 9 months from packing")
+      # against the declared packing date before comparing. Asserted only
+      # when the latest day the marking could mean has already gone.
+      #
+      # NOTE: this describes the pack as at the moment of scanning, judged
+      # against the device clock. It is a finding about stock on a shelf, not
+      # about how the label is printed, and the citation below is the date
+      # marking requirement rather than a prohibition on sale — which lives in
+      # the FSS Act and has not been reviewed against this rule.
+      type: not_expired
       relative_requires: mfg_date
     citation: >-
       Food Safety and Standards (Labelling and Display) Regulations, 2020,
