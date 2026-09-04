@@ -4,6 +4,8 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.labelguard.app.auth.Role
+import com.labelguard.app.auth.RoleStore
 import com.labelguard.app.history.HistoryCsv
 import com.labelguard.app.measure.CameraOptics
 import com.labelguard.app.measure.ImageSize
@@ -101,6 +103,43 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      */
     val optics = CameraOptics()
 
+    private val roleStore = RoleStore(application)
+
+    private val _role = MutableStateFlow(roleStore.role)
+    val role: StateFlow<Role> = _role.asStateFlow()
+
+    val hasInspectorPasscode: Boolean get() = roleStore.hasPasscode
+
+    private val _roleMessage = MutableStateFlow<String?>(null)
+    val roleMessage: StateFlow<String?> = _roleMessage.asStateFlow()
+
+    fun claimInspector(passcode: String) {
+        when (val result = roleStore.claimInspector(passcode)) {
+            is RoleStore.Result.Granted -> {
+                _role.value = roleStore.role
+                _roleMessage.value = if (result.firstTime) {
+                    "Inspector passcode set on this device"
+                } else {
+                    null
+                }
+            }
+
+            is RoleStore.Result.Rejected -> _roleMessage.value = result.reason
+        }
+    }
+
+    fun releaseInspector() {
+        roleStore.releaseInspector()
+        _role.value = roleStore.role
+        _roleMessage.value = null
+    }
+
+    fun clearRoleMessage() {
+        _roleMessage.value = null
+    }
+
+    fun can(capability: Role.Capability): Boolean = _role.value.can(capability)
+
     val skuStore = SkuStore(application)
 
     private val historyStore = HistoryStore(application)
@@ -135,6 +174,10 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      * filed in something other than a PDF.
      */
     fun exportHistoryCsv() {
+        if (!can(Role.Capability.EXPORT_HISTORY)) {
+            _exportStatus.value = "Exporting the inspection history is an inspector action"
+            return
+        }
         viewModelScope.launch {
             _exportStatus.value = "Writing history…"
             try {
@@ -159,6 +202,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearHistory() {
+        if (!can(Role.Capability.CLEAR_HISTORY)) return
         _history.value = historyStore.clear()
     }
 
@@ -180,6 +224,10 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      * that, and records the claim's origin so a later reader can weigh it.
      */
     fun enrolLastScan(skuId: String, note: String = "") {
+        if (!can(Role.Capability.ENROL_REFERENCE)) {
+            _exportStatus.value = "Registering a reference pack is an inspector action"
+            return
+        }
         if (skuId.isBlank() || lastScanFields.isEmpty()) return
         skuStore.put(Enrolment.fromScan(skuId, lastScanFields, note))
         _registry.value = skuStore.load()

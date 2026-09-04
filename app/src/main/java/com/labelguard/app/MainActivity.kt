@@ -9,7 +9,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -36,7 +38,9 @@ import com.labelguard.app.report.PdfSharing
 import androidx.compose.material3.TextButton
 import com.labelguard.app.ui.screens.BulkScreen
 import com.labelguard.app.ui.screens.CameraScreen
+import com.labelguard.app.auth.Role
 import com.labelguard.app.ui.screens.HistoryScreen
+import com.labelguard.app.ui.screens.RoleScreen
 import com.labelguard.app.ui.screens.ReportScreen
 import com.labelguard.app.ui.theme.LabelGuardTheme
 import com.labelguard.app.viewmodel.ExportedPdf
@@ -69,6 +73,9 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
     val history by viewModel.history.collectAsStateWithLifecycle()
     val historyQuery by viewModel.historyQuery.collectAsStateWithLifecycle()
     var showHistory by remember { mutableStateOf(false) }
+    var showRoles by remember { mutableStateOf(false) }
+    val role by viewModel.role.collectAsStateWithLifecycle()
+    val roleMessage by viewModel.roleMessage.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
 
@@ -78,6 +85,20 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
     ) { uris -> viewModel.scanBulk(uris) }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+        if (showRoles) {
+            RoleScreen(
+                role = role,
+                hasPasscode = viewModel.hasInspectorPasscode,
+                message = roleMessage,
+                onClaimInspector = viewModel::claimInspector,
+                onRelease = viewModel::releaseInspector,
+                onDismissMessage = viewModel::clearRoleMessage,
+                onBack = { showRoles = false },
+                modifier = Modifier.padding(innerPadding)
+            )
+            return@Scaffold
+        }
+
         if (showHistory) {
             HistoryScreen(
                 records = viewModel.filteredHistory(),
@@ -86,7 +107,8 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
                 query = historyQuery,
                 onQueryChange = viewModel::searchHistory,
                 onDelete = viewModel::deleteScan,
-                onExportCsv = viewModel::exportHistoryCsv,
+                onExportCsv = viewModel::exportHistoryCsv
+                    .takeIf { role.can(Role.Capability.EXPORT_HISTORY) },
                 onShareCsv = exportedResults
                     .takeIf { it.isNotEmpty() }
                     ?.let { files -> { shareResults(context, files) } },
@@ -127,7 +149,11 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
                 onShareResults = exportedResults
                     .takeIf { it.isNotEmpty() }
                     ?.let { files -> { shareResults(context, files) } },
-                onEnrol = { skuId -> viewModel.enrolLastScan(skuId) },
+                // Absent for a shopper: registering a reference asserts what
+                // a correct pack of this product says, which someone who
+                // bought it off a shelf has no way to know.
+                onEnrol = { skuId: String -> viewModel.enrolLastScan(skuId) }
+                    .takeIf { role.can(Role.Capability.ENROL_REFERENCE) },
                 modifier = Modifier.padding(innerPadding)
             )
 
@@ -144,7 +170,10 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
                         .padding(innerPadding)
                         .padding(16.dp)
                 ) {
-                    HistoryButton(history.size) { showHistory = true }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RoleButton(role) { showRoles = true }
+                        HistoryButton(history.size) { showHistory = true }
+                    }
                 }
 
                 Box(
@@ -187,6 +216,14 @@ private fun shareResults(context: Context, files: List<java.io.File>) {
 private fun openPdf(context: Context, pdf: ExportedPdf) {
     runCatching { context.startActivity(PdfSharing.openIntent(context, pdf.file)) }
         .onFailure { Toast.makeText(context, "No PDF viewer installed", Toast.LENGTH_SHORT).show() }
+}
+
+/** Shows the active role, and opens the switcher. */
+@Composable
+private fun RoleButton(role: Role, onClick: () -> Unit) {
+    androidx.compose.material3.FilledTonalButton(onClick = onClick) {
+        androidx.compose.material3.Text(role.label)
+    }
 }
 
 /** Entry to the inspection history, showing how much is recorded. */

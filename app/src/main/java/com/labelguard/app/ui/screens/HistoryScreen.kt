@@ -47,7 +47,8 @@ fun HistoryScreen(
     query: String,
     onQueryChange: (String) -> Unit,
     onDelete: (String) -> Unit,
-    onExportCsv: () -> Unit,
+    /** Null for a shopper: the aggregate is an enforcement artefact. */
+    onExportCsv: (() -> Unit)? = null,
     onShareCsv: (() -> Unit)? = null,
     exportStatus: String? = null,
     onBack: () -> Unit,
@@ -79,7 +80,9 @@ fun HistoryScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(onClick = onExportCsv) { Text("Export CSV") }
+                onExportCsv?.let {
+                    OutlinedButton(onClick = it) { Text("Export CSV") }
+                }
                 onShareCsv?.let { TextButton(onClick = it) { Text("Share") } }
             }
             exportStatus?.let {

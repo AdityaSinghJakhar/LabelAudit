@@ -52,6 +52,10 @@ fun ReportScreen(
     onOpenPdf: (() -> Unit)? = null,
     onExportResults: (() -> Unit)? = null,
     onShareResults: (() -> Unit)? = null,
+    /**
+     * Null for a shopper. Registering a reference asserts what a correct pack
+     * says, which someone who bought a packet off a shelf cannot know.
+     */
     onEnrol: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
