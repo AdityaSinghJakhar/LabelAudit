@@ -183,13 +183,36 @@ object FieldExtractor {
             ?.let { fields["expiry"] = it }
         findFssai(lines)?.let { fields["fssai_licence"] = it }
 
-        lines.firstOrNull { TAX_INCLUSIVE_RE.containsMatchIn(it.text) }?.let {
-            fields["tax_inclusive"] = Consensus.Observation(it.text.trim(), it.box)
-        }
+        findTaxInclusive(lines)?.let { fields["tax_inclusive"] = it }
 
         findBrand(lines)?.let { fields["brand"] = it }
 
         return fields
+    }
+
+    /**
+     * The tax-inclusive wording.
+     *
+     * Printed small, low-contrast and parenthesised, so OCR frequently breaks
+     * "(INCL. OF ALL TAXES)" across two lines or attaches part of it to the
+     * price above. Matching line by line therefore missed wording that is
+     * plainly on the pack, so the joined text is checked as a fallback.
+     */
+    fun findTaxInclusive(lines: List<OcrLine>): Consensus.Observation? {
+        lines.firstOrNull { TAX_INCLUSIVE_RE.containsMatchIn(it.text) }?.let {
+            return Consensus.Observation(it.text.trim(), it.box)
+        }
+
+        val joined = lines.joinToString(" ") { it.text }
+        if (!TAX_INCLUSIVE_RE.containsMatchIn(joined)) return null
+
+        // Anchor the evidence to whichever line carries the recognisable part.
+        val anchor = lines.firstOrNull { it.text.contains("incl", ignoreCase = true) }
+            ?: lines.firstOrNull { it.text.contains("tax", ignoreCase = true) }
+            ?: lines.firstOrNull { MRP_LINE_RE.containsMatchIn(it.text) }
+            ?: return null
+
+        return Consensus.Observation(anchor.text.trim(), anchor.box)
     }
 
     /**

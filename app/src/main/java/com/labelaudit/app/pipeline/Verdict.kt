@@ -52,12 +52,17 @@ data class Finding(
     val confidence: Float,
     val status: RuleStatus,
     val field: String,
+    /** Plain-words description of the check; falls back to the rule id. */
+    val ruleName: String = "",
     val message: String = "",
     val reason: String? = null,
     /** Value the pipeline actually read, for the evidence column. */
     val observedValue: String? = null,
     val evidence: Map<String, String> = emptyMap()
 ) {
+    /** What to show a reader: the plain name if there is one, else the id. */
+    val label: String get() = ruleName.ifBlank { ruleId }
+
     init {
         require(ruleId.isNotBlank()) { "finding requires ruleId" }
         require(citation.isNotBlank()) { "finding $ruleId requires a citation" }

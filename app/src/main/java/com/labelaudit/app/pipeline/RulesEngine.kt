@@ -47,6 +47,7 @@ object RulesEngine {
                     confidence = 1f,
                     status = RuleStatus.EXEMPT,
                     field = rule.field,
+                    ruleName = rule.name,
                     message = "Exempt under ${exemption.id}",
                     evidence = mapOf("exemption_id" to exemption.id)
                 )
@@ -75,6 +76,7 @@ object RulesEngine {
                 confidence = observed?.confidence ?: 0f,
                 status = outcome.status,
                 field = rule.field,
+                ruleName = rule.name,
                 message = outcome.message,
                 reason = outcome.reason,
                 observedValue = observed?.value,

@@ -35,7 +35,13 @@ data class Ruleset(
         val id: String,
         val field: String,
         val check: Check,
-        val citation: String
+        val citation: String,
+        /**
+         * What the rule checks, in plain words. Two rules can share a clause —
+         * presence and correctness both sit under r. 6(1)(e) — so the citation
+         * cannot tell a reader them apart and the id says nothing at all.
+         */
+        val name: String = ""
     )
 
     data class Check(
@@ -128,7 +134,8 @@ data class Ruleset(
                         // Refuse at load time rather than emitting an
                         // unsubstantiated finding later.
                         citation = raw["citation"]?.toString()
-                            ?: throw IllegalArgumentException("rule $id has no citation")
+                            ?: throw IllegalArgumentException("rule $id has no citation"),
+                        name = raw["name"]?.toString().orEmpty()
                     )
                 }
 
