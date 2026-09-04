@@ -33,7 +33,7 @@ import androidx.compose.material3.TextButton
 import com.labelaudit.app.ui.screens.BulkScreen
 import com.labelaudit.app.ui.screens.CameraScreen
 import com.labelaudit.app.ui.screens.ReportScreen
-import com.labelaudit.app.ui.theme.LabelAuditTheme
+import com.labelaudit.app.ui.theme.LabelGuardTheme
 import com.labelaudit.app.viewmodel.ExportedPdf
 import com.labelaudit.app.viewmodel.ScanState
 import com.labelaudit.app.viewmodel.ScanViewModel
@@ -43,8 +43,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            LabelAuditTheme {
-                LabelAuditApp()
+            LabelGuardTheme {
+                LabelGuardApp()
             }
         }
     }
@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
 private const val MAX_BULK_IMAGES = 30
 
 @Composable
-private fun LabelAuditApp(viewModel: ScanViewModel = viewModel()) {
+private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
     val scanState by viewModel.state.collectAsStateWithLifecycle()
     val exportStatus by viewModel.exportStatus.collectAsStateWithLifecycle()
     val exported by viewModel.exported.collectAsStateWithLifecycle()

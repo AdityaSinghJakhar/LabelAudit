@@ -17,7 +17,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.labelaudit.app.ui.theme.LabelAuditTheme
+import com.labelaudit.app.ui.theme.LabelGuardTheme
 import com.labelaudit.app.viewmodel.ConnectionState
 import com.labelaudit.app.viewmodel.ConnectionViewModel
 
@@ -56,7 +56,7 @@ private fun ConnectionContent(
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = "Label Audit",
+            text = "Label Guard",
             style = MaterialTheme.typography.headlineMedium
         )
 
@@ -124,7 +124,7 @@ private fun ConnectionContent(
 @Preview(showBackground = true)
 @Composable
 private fun ConnectionScreenIdlePreview() {
-    LabelAuditTheme {
+    LabelGuardTheme {
         ConnectionContent(state = ConnectionState.Idle, onCheck = {}, onContinue = {})
     }
 }
@@ -132,7 +132,7 @@ private fun ConnectionScreenIdlePreview() {
 @Preview(showBackground = true)
 @Composable
 private fun ConnectionScreenConnectedPreview() {
-    LabelAuditTheme {
+    LabelGuardTheme {
         ConnectionContent(
             state = ConnectionState.Connected("0.1.0", "2026-08-31T10:45:00Z"),
             onCheck = {},
