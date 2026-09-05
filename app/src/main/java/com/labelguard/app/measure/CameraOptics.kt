@@ -30,18 +30,22 @@ class CameraOptics {
     // Fixed characteristics of the bound camera.
     @Volatile private var sensorWidthMm: Float? = null
     @Volatile private var sensorHeightMm: Float? = null
-    @Volatile private var calibration: Int = Scale.CALIBRATION_UNCALIBRATED
+    @Volatile private var calibrationLevel: Int = Scale.CALIBRATION_UNCALIBRATED
 
     // Per-frame, updated as the capture session runs.
     @Volatile private var focalLengthMm: Float? = null
     @Volatile private var focusDiopters: Float? = null
 
     /**
-     * A correction measured once on this device against an object of known
-     * size. Until that flow exists this stays 1.0, and the wider
-     * device-reported tolerance applies.
+     * The correction measured against an object of known size, if one has
+     * been taken. Applied only where it is valid — see [Calibration.appliesAt]
+     * — because a reference measured at arm's length says little about a
+     * macro shot, and a narrow wrong band is worse than a wide honest one.
      */
-    @Volatile var userCorrection: Double = 1.0
+    @Volatile var calibration: Calibration? = null
+
+    /** The focus distance of the most recent frame, for the calibration flow. */
+    val currentDiopters: Double? get() = focusDiopters?.toDouble()
 
     val available: Boolean
         get() = sensorHeightMm != null && focalLengthMm != null && focusDiopters != null
@@ -50,7 +54,7 @@ class CameraOptics {
     val unavailableReason: String?
         get() = when {
             sensorHeightMm == null -> "the camera did not report its sensor size"
-            calibration == Scale.CALIBRATION_UNCALIBRATED ->
+            calibrationLevel == Scale.CALIBRATION_UNCALIBRATED ->
                 "this device reports its focus distance as uncalibrated"
             focalLengthMm == null -> "the camera did not report a focal length"
             focusDiopters == null -> "the camera did not report a focus distance"
@@ -68,7 +72,7 @@ class CameraOptics {
                 sensorHeightMm = it.height
             }
 
-        calibration = characteristics.getCameraCharacteristic(
+        calibrationLevel = characteristics.getCameraCharacteristic(
             CameraCharacteristics.LENS_INFO_FOCUS_DISTANCE_CALIBRATION
         ) ?: Scale.CALIBRATION_UNCALIBRATED
     }
@@ -105,19 +109,44 @@ class CameraOptics {
      * decide how much of the sensor the frame actually covers, since a wider
      * aspect ratio than the sensor's is produced by cropping it.
      */
-    fun scaleFor(imageWidthPx: Int, imageHeightPx: Int): Scale? {
+    fun scaleFor(imageWidthPx: Int, imageHeightPx: Int): Scale? =
+        scaleFor(imageWidthPx, imageHeightPx, applyCalibration = true)
+
+    /**
+     * The scale for an image of this size, or null when the device cannot
+     * supply one.
+     *
+     * The image dimensions matter twice: they set the pixel pitch, and they
+     * decide how much of the sensor the frame actually covers, since a wider
+     * aspect ratio than the sensor's is produced by cropping it.
+     *
+     * [applyCalibration] is false only while measuring a calibration
+     * reference, where the whole point is to see what the optics said before
+     * any correction — applying the old correction there would fold it into
+     * the new one and compound with every recalibration.
+     */
+    fun scaleFor(
+        imageWidthPx: Int,
+        imageHeightPx: Int,
+        applyCalibration: Boolean
+    ): Scale? {
         val sensorW = sensorWidthMm?.toDouble() ?: return null
         val sensorH = sensorHeightMm?.toDouble() ?: return null
         val focal = focalLengthMm?.toDouble() ?: return null
         val diopters = focusDiopters?.toDouble() ?: return null
+
+        val correction = calibration
+            ?.takeIf { applyCalibration && it.appliesAt(diopters) }
+            ?.correction
+            ?: 1.0
 
         return Scale.from(
             sensorMm = Scale.sensorHeightCovering(sensorW, sensorH, imageWidthPx, imageHeightPx),
             imagePx = imageHeightPx,
             focalLengthMm = focal,
             focusDiopters = diopters,
-            calibration = calibration,
-            userCorrection = userCorrection
+            calibration = calibrationLevel,
+            userCorrection = correction
         )
     }
 
