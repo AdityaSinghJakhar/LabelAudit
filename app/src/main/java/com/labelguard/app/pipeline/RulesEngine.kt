@@ -84,7 +84,7 @@ object RulesEngine {
             val outcome = when (rule.check.type) {
                 "field_present" -> checkFieldPresent(rule, observed)
                 "matches_registry" -> checkMatchesRegistry(rule, observed, ruleset)
-                "role_present" -> checkRolePresent(rule, context)
+                "role_present" -> checkRolePresent(rule, observed, context)
                 "date_marking" -> checkDateMarking(rule, observed, fields)
                 "date_not_future" -> checkDateNotFuture(rule, observed, context)
                 "date_order" -> checkDateOrder(rule, observed, fields)
@@ -481,7 +481,22 @@ object RulesEngine {
         }
     }
 
-    private fun checkRolePresent(rule: Ruleset.Rule, context: Context): Outcome {
+    private fun checkRolePresent(
+        rule: Ruleset.Rule,
+        observed: Consensus.AgreedField?,
+        context: Context
+    ): Outcome {
+        // The role was named and no address followed it. The pack made a
+        // declaration and did not honour it, which is a violation rather than
+        // a field the pipeline failed to find.
+        if (observed?.anchorOnly == true) {
+            return Outcome(
+                RuleStatus.FAIL,
+                "The role is named but no address follows it. Confirm it is " +
+                    "blank on the pack and not merely outside the photographed area."
+            )
+        }
+
         val role = rule.check.role
             ?: return Outcome(
                 RuleStatus.NOT_ASSESSABLE,

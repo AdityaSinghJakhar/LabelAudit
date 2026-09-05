@@ -554,6 +554,10 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         consensus: Consensus.Result
     ): Map<FieldExtractor.AddressRole, List<String>> {
         val agreed = consensus.fields["manufacturer_address"] ?: return emptyMap()
+        // A caption with no address under it is not an address. Passing the
+        // empty string through would satisfy the role check with a list that
+        // is non-empty but says nothing.
+        if (agreed.anchorOnly || agreed.value.isBlank()) return emptyMap()
         return mapOf(FieldExtractor.AddressRole.MANUFACTURER to listOf(agreed.value))
     }
 

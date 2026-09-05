@@ -42,8 +42,19 @@ object FieldExtractor {
         val text: String,
         val box: Box,
         /** The literal anchor that assigned the role; null when UNKNOWN. */
-        val anchor: String?
-    )
+        val anchor: String?,
+        /**
+         * The address itself, with the role caption removed.
+         *
+         * A pack printing "निर्माता:" and nothing else has named a role and
+         * given no address. That is a declaration it failed to make, and it
+         * has to read differently from one that carries a real address —
+         * otherwise the caption alone passes the check.
+         */
+        val body: String = ""
+    ) {
+        val captionOnly: Boolean get() = anchor != null && body.isBlank()
+    }
 
     data class ConsumerCare(
         val text: String,
@@ -116,6 +127,46 @@ object FieldExtractor {
         "use by", "used by", "best before", "expiry", "exp. date", "exp date",
         "उपयोग की तिथि", "सर्वोत्तम"
     )
+
+    /**
+     * Every caption this extractor knows, so a value hunted in the next column
+     * is never another field's caption.
+     */
+    private val ALL_CAPTION_ANCHORS: List<String> =
+        CONSUMER_CARE_ANCHORS + MFG_DATE_ANCHORS + BATCH_ANCHORS + EXPIRY_ANCHORS
+
+    /**
+     * Words that only ever belong to a caption, left stranded when OCR
+     * corrupts one.
+     *
+     * "BATCH NO." came back as "BATCH N0." — a digit zero for the letter O.
+     * The anchor "batch no" then failed to match and the bare "batch" anchor
+     * took over, leaving "N0." behind to be read as the batch code. The pack
+     * had no batch number at all, and the check passed on the caption's own
+     * second word.
+     *
+     * The word boundary matters: it keeps a genuine code like "N0123" or
+     * "NO7" intact while stripping a stranded "N0." or "NO :".
+     */
+    private val CAPTION_RESIDUE_RE = Regex(
+        """^(?:no|n0|nos|number|num|lot|code|sr|s\.?no)\b\.?""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private const val SEPARATORS = " :-.\u2013\u2014"
+
+    /**
+     * Drop separators and any stranded caption words from the text following
+     * an anchor.
+     */
+    private fun stripCaptionResidue(raw: String): String {
+        var text = raw.trim { it in SEPARATORS }
+        while (true) {
+            val residue = CAPTION_RESIDUE_RE.find(text) ?: break
+            text = text.substring(residue.value.length).trim { it in SEPARATORS }
+        }
+        return text
+    }
     private val FSSAI_ANCHOR_RE = Regex(
         """fssai|\blic\b\.?|licence\s*no|license\s*no""",
         RegexOption.IGNORE_CASE
@@ -129,8 +180,17 @@ object FieldExtractor {
         RegexOption.IGNORE_CASE
     )
 
-    /** Batch codes are alphanumeric; require at least one digit to avoid words. */
-    private val BATCH_VALUE_RE = Regex("""[A-Z0-9][A-Z0-9\-/]{1,19}""", RegexOption.IGNORE_CASE)
+    /**
+     * Batch codes are alphanumeric and contain at least one digit.
+     *
+     * The digit is what the comment here always claimed and the pattern never
+     * enforced: without it, "NO" left over from a corrupted "BATCH NO."
+     * qualified as a batch code, and so would any other stray word.
+     */
+    private val BATCH_VALUE_RE = Regex(
+        """\b(?=[A-Z0-9\-/]*\d)[A-Z0-9][A-Z0-9\-/]{1,19}\b""",
+        RegexOption.IGNORE_CASE
+    )
 
     /**
      * A run of digits, possibly spaced or hyphenated by OCR.
@@ -168,7 +228,13 @@ object FieldExtractor {
 
         val addresses = tagAddresses(lines)
         addresses.firstOrNull { it.role == AddressRole.MANUFACTURER }?.let {
-            fields["manufacturer_address"] = Consensus.Observation(it.text, it.box)
+            // A role named with no address under it is the same defect as
+            // "BATCH NO. :" with nothing after it, and is reported the same way.
+            fields["manufacturer_address"] = Consensus.Observation(
+                value = if (it.captionOnly) "" else it.text,
+                box = it.box,
+                anchorOnly = it.captionOnly
+            )
         }
 
         findConsumerCare(lines)?.let {
@@ -309,13 +375,20 @@ object FieldExtractor {
 
         for (line in lines) {
             val lowered = line.text.lowercase()
-            val anchor = anchors.firstOrNull { lowered.contains(it) } ?: continue
+
+            // Longest match wins. "batch" and "batch no" both match the same
+            // caption, and taking the shorter one leaves the word "no" behind
+            // to be mistaken for the value.
+            val anchor = anchors.filter { lowered.contains(it) }.maxByOrNull { it.length }
+                ?: continue
 
             // Look only after the caption, so "BATCH NO." does not match its
             // own digits and a neighbouring value is not stolen.
-            val afterAnchor = line.text.substring(
-                (lowered.indexOf(anchor) + anchor.length).coerceAtMost(line.text.length)
-            ).trimStart(' ', ':', '-', '.', '–')
+            val afterAnchor = stripCaptionResidue(
+                line.text.substring(
+                    (lowered.indexOf(anchor) + anchor.length).coerceAtMost(line.text.length)
+                )
+            )
 
             val match = valuePattern.find(afterAnchor)
             if (match != null) {
@@ -339,9 +412,71 @@ object FieldExtractor {
             if (blankAnchor == null) blankAnchor = line
         }
 
-        return blankAnchor?.let {
-            Consensus.Observation(value = "", box = it.box, anchorOnly = true)
-        }
+        val caption = blankAnchor ?: return null
+
+        // Nothing followed the caption on its own line. Before reporting the
+        // declaration as blank, look along the row for it.
+        valueInSameRow(caption, lines, valuePattern)?.let { return it }
+
+        return Consensus.Observation(value = "", box = caption.box, anchorOnly = true)
+    }
+
+    /**
+     * A value printed in the column beside its caption.
+     *
+     * Labels are routinely set as two columns — captions down the left, values
+     * down the right — and OCR groups that layout by column, so the value
+     * arrives as a line of its own several lines away from the caption it
+     * belongs to. Reading only the caption's own line reports every one of
+     * those declarations as blank, which would fail a compliant pack.
+     *
+     * Pairing by geometry rather than by reading order is what makes this
+     * safe, and the conditions are deliberately strict: a value must sit on
+     * the same row as its caption, start to the right of where the caption
+     * ends, and not be another field's caption. A pairing that is merely
+     * plausible would put a declaration on the report that the pack never
+     * made, which is worse than reporting the field blank.
+     */
+    private fun valueInSameRow(
+        caption: OcrLine,
+        lines: List<OcrLine>,
+        valuePattern: Regex
+    ): Consensus.Observation? {
+        val height = caption.box.height.takeIf { it > 0 } ?: return null
+        val centre = (caption.box.top + caption.box.bottom) / 2.0
+
+        val candidate = lines
+            .asSequence()
+            .filter { it !== caption }
+            // Same row. Half a line's height of drift is the most that can be
+            // allowed before the row below starts to qualify.
+            .filter { kotlin.math.abs((it.box.top + it.box.bottom) / 2.0 - centre) <= height * 0.5 }
+            // In the column immediately to the right, which is where a value
+            // column sits. A little overlap is tolerated because caption boxes
+            // often run on past the printed text.
+            //
+            // The upper bound is what keeps a second pack out. Photograph two
+            // packets side by side — which is how a shelf is photographed —
+            // and a nutrition row on the neighbour can share a row with this
+            // caption and carry digits that pass for a batch code. A value
+            // belonging to this caption sits beside it, not a label away.
+            .filter { it.box.left >= caption.box.right - height }
+            .filter { it.box.left - caption.box.right <= caption.box.width }
+            // Never another declaration's caption: that line's value belongs
+            // to it, not to this one.
+            .filter { candidate ->
+                val lowered = candidate.text.lowercase()
+                ALL_CAPTION_ANCHORS.none { lowered.contains(it) }
+            }
+            // Nearest wins, so a distant line cannot outbid the real value.
+            .minByOrNull { it.box.left }
+            ?: return null
+
+        val text = stripCaptionResidue(candidate.text)
+        val match = valuePattern.find(text) ?: return null
+        val value = match.value.trim()
+
+        return Consensus.Observation(value, candidate.boxFor(value) ?: candidate.box)
     }
 
     /**
@@ -400,12 +535,86 @@ object FieldExtractor {
 
     fun tagAddress(text: String, box: Box): TaggedAddress {
         val match = matchAnchor(text)
-            ?: return TaggedAddress(AddressRole.UNKNOWN, text.trim(), box, null)
-        return TaggedAddress(match.first, text.trim(), box, match.second)
+            ?: return TaggedAddress(AddressRole.UNKNOWN, text.trim(), box, null, text.trim())
+
+        val body = text.substring(
+            (text.lowercase().indexOf(match.second.lowercase()) + match.second.length)
+                .coerceAtMost(text.length)
+        ).trim { it in SEPARATORS }
+
+        return TaggedAddress(match.first, text.trim(), box, match.second, body)
     }
 
-    fun tagAddresses(lines: List<OcrLine>): List<TaggedAddress> =
-        lines.map { tagAddress(it.text, it.box) }
+    /**
+     * An address is at least this many characters. Shorter than this and what
+     * follows the caption is punctuation or an OCR fragment, not a place.
+     */
+    private const val MIN_ADDRESS_BODY = 6
+
+    /** How many lines below a role caption its address may run to. */
+    private const val ADDRESS_CONTINUATION_LINES = 3
+
+    /**
+     * Tag address lines by role, following an address onto the lines below.
+     *
+     * Packs print the role on one line and the address under it:
+     *
+     *     निर्माता :
+     *     गोकुल
+     *     रोड़ नं. 7, नेहरू नगर, इन्दौर
+     *
+     * Tagging each line on its own left the manufacturer "address" as the
+     * word "निर्माता" — the caption, with the address sitting untagged
+     * underneath. The check then passed on a pack that had named a role and
+     * given no address, which is exactly the declaration it is meant to test.
+     *
+     * Continuation stops at the next caption of any kind, so one field's
+     * address cannot swallow the next field's declaration.
+     */
+    fun tagAddresses(lines: List<OcrLine>): List<TaggedAddress> {
+        val tagged = mutableListOf<TaggedAddress>()
+
+        for ((index, line) in lines.withIndex()) {
+            val head = tagAddress(line.text, line.box)
+            if (head.anchor == null || head.body.length >= MIN_ADDRESS_BODY) {
+                tagged += head
+                continue
+            }
+
+            // The caption stands alone. Read on for the address it introduces.
+            val absorbed = mutableListOf<String>()
+            var box = line.box
+
+            for (offset in 1..ADDRESS_CONTINUATION_LINES) {
+                val next = lines.getOrNull(index + offset) ?: break
+                val lowered = next.text.lowercase()
+
+                val isAnotherCaption = matchAnchor(next.text) != null ||
+                    ALL_CAPTION_ANCHORS.any { lowered.contains(it) }
+                if (isAnotherCaption) break
+
+                val text = next.text.trim { it in SEPARATORS }
+                if (text.isBlank()) continue
+
+                absorbed += text
+                box = Box(
+                    left = minOf(box.left, next.box.left),
+                    top = minOf(box.top, next.box.top),
+                    right = maxOf(box.right, next.box.right),
+                    bottom = maxOf(box.bottom, next.box.bottom)
+                )
+            }
+
+            val body = absorbed.joinToString(", ")
+            tagged += head.copy(
+                text = if (body.isBlank()) head.text else head.text + " " + body,
+                box = box,
+                body = body
+            )
+        }
+
+        return tagged
+    }
 
     /**
      * Consumer care requires an explicit anchor. A stray phone number
