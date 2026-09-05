@@ -12,6 +12,7 @@ import com.labelguard.app.measure.Calibration
 import com.labelguard.app.measure.CalibrationStore
 import com.labelguard.app.measure.CameraOptics
 import com.labelguard.app.measure.ImageSize
+import com.labelguard.app.measure.Sharpness
 import com.labelguard.app.measure.Scale
 import com.labelguard.app.history.HistoryStore
 import com.labelguard.app.history.ScanRecord
@@ -438,7 +439,16 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         val usableFrames = mutableListOf<File>()
         var rawLines: List<String> = emptyList()
 
-        frames.forEachIndexed { index, file ->
+        // Rank the burst on focus before reading any of it. A soft frame does
+        // not merely contribute nothing — it contributes a *wrong* reading,
+        // and consensus counts that reading as a vote. One badly blurred frame
+        // in three is enough to break agreement on a declaration the other two
+        // read perfectly, which surfaces as "no consensus" on a pack that was
+        // photographed fine twice.
+        val focus = withContext(Dispatchers.Default) { rankFocus(frames) }
+        val keep = focus.usable.map { frames[it.index] }.ifEmpty { frames }
+
+        keep.forEachIndexed { index, file ->
             onProgress(index + 1)
             val ocr = OcrEngine.recognize(getApplication(), file)
             perFrame += FieldExtractor.extract(ocr.lines)
@@ -480,7 +490,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             crops = crops,
             consensus = consensus,
             framesUsed = perFrame.size,
-            framesGated = 0,
+            framesGated = frames.size - keep.size,
             elapsedMs = (System.nanoTime() - started) / 1_000_000,
             rawLines = rawLines,
             matchedSkuId = matched?.skuId,
@@ -546,6 +556,31 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearBulk() {
         _bulk.value = null
+    }
+
+    /**
+     * Focus for each frame of a burst, ranked against its own sharpest.
+     *
+     * Decoded at a small working size and released immediately: a burst of
+     * full-resolution captures held in memory at once is how this pass would
+     * cost more than the recognition it protects.
+     */
+    private fun rankFocus(frames: List<File>): Sharpness.Comparison {
+        val variances = frames.map { file ->
+            val options = android.graphics.BitmapFactory.Options().apply {
+                // Enough detail to tell focus apart, a fraction of the pixels.
+                inSampleSize = 4
+            }
+            val bitmap = android.graphics.BitmapFactory
+                .decodeFile(file.absolutePath, options)
+                ?: return@map 0.0
+            try {
+                Sharpness.of(bitmap)
+            } finally {
+                bitmap.recycle()
+            }
+        }
+        return Sharpness.compare(variances)
     }
 
     /** Fields the ruleset asks a character height of. */
