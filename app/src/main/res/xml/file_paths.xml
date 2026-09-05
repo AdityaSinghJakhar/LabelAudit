@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Only the reports directory is exposed. Scan frames and caches stay private;
+  sharing is for the finished PDF, not the raw evidence.
+-->
+<paths>
+    <external-files-path name="reports" path="reports/" />
+</paths>
