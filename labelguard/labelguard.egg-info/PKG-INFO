@@ -1,9 +1,0 @@
-Metadata-Version: 2.4
-Name: labelguard
-Version: 0.1.0
-Summary: Legal Metrology label compliance domain logic: field extraction, rules engine, measurement.
-Requires-Python: >=3.11
-Requires-Dist: pyyaml>=6.0
-Requires-Dist: pydantic>=2.10
-Provides-Extra: dev
-Requires-Dist: pytest>=8.0; extra == "dev"
