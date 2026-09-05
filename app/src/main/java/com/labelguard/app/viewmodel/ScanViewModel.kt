@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.labelguard.app.auth.Role
 import com.labelguard.app.auth.RoleStore
 import com.labelguard.app.history.HistoryCsv
+import com.labelguard.app.measure.Calibration
+import com.labelguard.app.measure.CalibrationStore
 import com.labelguard.app.measure.CameraOptics
 import com.labelguard.app.measure.ImageSize
 import com.labelguard.app.measure.Scale
@@ -102,6 +104,41 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      * NOT_ASSESSABLE on a bulk upload rather than reporting a size.
      */
     val optics = CameraOptics()
+
+    private val calibrationStore = CalibrationStore(application)
+
+    private val _calibration = MutableStateFlow(calibrationStore.load())
+    val calibration: StateFlow<Calibration?> = _calibration.asStateFlow()
+
+    init {
+        // Restore before the first scan, or the first scan of a session would
+        // silently measure with the wide uncorrected band.
+        optics.calibration = _calibration.value
+    }
+
+    /**
+     * Record a correction measured against an object of known size.
+     *
+     * Only ever taken by an inspector: it changes what every later millimetre
+     * figure on this phone means, and a bad one is invisible in the output.
+     */
+    fun saveCalibration(calibration: Calibration) {
+        if (!can(Role.Capability.MANAGE_REGISTRY)) {
+            _exportStatus.value = "Calibrating the camera is an inspector action"
+            return
+        }
+        calibrationStore.save(calibration)
+        _calibration.value = calibration
+        optics.calibration = calibration
+        _exportStatus.value = "Camera calibrated: %+.0f%%".format(calibration.errorPercent)
+    }
+
+    fun clearCalibration() {
+        if (!can(Role.Capability.MANAGE_REGISTRY)) return
+        calibrationStore.clear()
+        _calibration.value = null
+        optics.calibration = null
+    }
 
     private val roleStore = RoleStore(application)
 

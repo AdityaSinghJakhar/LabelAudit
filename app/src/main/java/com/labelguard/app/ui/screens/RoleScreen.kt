@@ -42,6 +42,9 @@ fun RoleScreen(
     message: String?,
     onClaimInspector: (String) -> Unit,
     onRelease: () -> Unit,
+    /** Null for a shopper: a bad calibration silently skews every scan. */
+    onCalibrate: (() -> Unit)? = null,
+    calibrationSummary: String? = null,
     onDismissMessage: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
@@ -87,6 +90,29 @@ fun RoleScreen(
 
         when (role) {
             Role.INSPECTOR -> {
+                onCalibrate?.let { calibrate ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text("Camera calibration", fontWeight = FontWeight.Medium)
+                            Text(
+                                calibrationSummary
+                                    ?: "Not calibrated. Character heights carry the " +
+                                    "device's own uncertainty, which is wide enough " +
+                                    "that most size checks can only defer.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                            TextButton(onClick = calibrate) {
+                                Text(
+                                    if (calibrationSummary == null) "Calibrate the camera"
+                                    else "Calibrate again"
+                                )
+                            }
+                        }
+                    }
+                }
+
                 OutlinedButton(onClick = onRelease, modifier = Modifier.fillMaxWidth()) {
                     Text("Switch back to shopper")
                 }

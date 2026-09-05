@@ -40,6 +40,7 @@ import com.labelguard.app.ui.screens.BulkScreen
 import com.labelguard.app.ui.screens.CameraScreen
 import com.labelguard.app.auth.Role
 import com.labelguard.app.ui.screens.HistoryScreen
+import com.labelguard.app.ui.screens.CalibrationScreen
 import com.labelguard.app.ui.screens.RoleScreen
 import com.labelguard.app.ui.screens.ReportScreen
 import com.labelguard.app.ui.theme.LabelGuardTheme
@@ -74,6 +75,8 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
     val historyQuery by viewModel.historyQuery.collectAsStateWithLifecycle()
     var showHistory by remember { mutableStateOf(false) }
     var showRoles by remember { mutableStateOf(false) }
+    var showCalibration by remember { mutableStateOf(false) }
+    val calibration by viewModel.calibration.collectAsStateWithLifecycle()
     val role by viewModel.role.collectAsStateWithLifecycle()
     val roleMessage by viewModel.roleMessage.collectAsStateWithLifecycle()
 
@@ -85,6 +88,18 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
     ) { uris -> viewModel.scanBulk(uris) }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+        if (showCalibration) {
+            CalibrationScreen(
+                optics = viewModel.optics,
+                existing = calibration,
+                onSave = viewModel::saveCalibration,
+                onClear = viewModel::clearCalibration,
+                onBack = { showCalibration = false },
+                modifier = Modifier.padding(innerPadding)
+            )
+            return@Scaffold
+        }
+
         if (showRoles) {
             RoleScreen(
                 role = role,
@@ -92,6 +107,9 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
                 message = roleMessage,
                 onClaimInspector = viewModel::claimInspector,
                 onRelease = viewModel::releaseInspector,
+                onCalibrate = { showRoles = false; showCalibration = true }
+                    .takeIf { role.can(Role.Capability.MANAGE_REGISTRY) },
+                calibrationSummary = calibration?.describe(),
                 onDismissMessage = viewModel::clearRoleMessage,
                 onBack = { showRoles = false },
                 modifier = Modifier.padding(innerPadding)
