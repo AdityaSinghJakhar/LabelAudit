@@ -66,6 +66,8 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
     val calibration by viewModel.calibration.collectAsStateWithLifecycle()
     val role by viewModel.role.collectAsStateWithLifecycle()
     val roleMessage by viewModel.roleMessage.collectAsStateWithLifecycle()
+    val keepCorpus by viewModel.keepCorpus.collectAsStateWithLifecycle()
+    val corpusSummary by viewModel.corpusSummary.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
 
@@ -106,6 +108,16 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
                 onCalibrate = { showRoles = false; showCalibration = true }
                     .takeIf { role.can(Role.Capability.MANAGE_REGISTRY) },
                 calibrationSummary = calibration?.describe(),
+                keepCorpus = keepCorpus,
+                onKeepCorpus = viewModel::setKeepCorpus
+                    .takeIf { role.can(Role.Capability.MANAGE_REGISTRY) },
+                corpusSummary = corpusSummary,
+                onClearCorpus = viewModel::clearCorpus
+                    .takeIf { role.can(Role.Capability.MANAGE_REGISTRY) },
+                onShareCorpus = {
+                    val files = viewModel.corpusFiles()
+                    if (files.isNotEmpty()) shareResults(context, files)
+                }.takeIf { role.can(Role.Capability.MANAGE_REGISTRY) },
                 onDismissMessage = viewModel::clearRoleMessage,
                 onBack = { showRoles = false },
                 modifier = Modifier.padding(innerPadding)

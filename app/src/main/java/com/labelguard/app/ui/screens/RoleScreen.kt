@@ -13,6 +13,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -45,6 +46,15 @@ fun RoleScreen(
     /** Null for a shopper: a bad calibration silently skews every scan. */
     onCalibrate: (() -> Unit)? = null,
     calibrationSummary: String? = null,
+    /**
+     * Keeping scans for evaluation. Null for a shopper: it is a measuring
+     * instrument that grows without bound, not a feature.
+     */
+    keepCorpus: Boolean = false,
+    onKeepCorpus: ((Boolean) -> Unit)? = null,
+    corpusSummary: String = "",
+    onClearCorpus: (() -> Unit)? = null,
+    onShareCorpus: (() -> Unit)? = null,
     onDismissMessage: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
@@ -108,6 +118,46 @@ fun RoleScreen(
                                     if (calibrationSummary == null) "Calibrate the camera"
                                     else "Calibrate again"
                                 )
+                            }
+                        }
+                    }
+                }
+
+                onKeepCorpus?.let { setKeep ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Keep scans for evaluation", fontWeight = FontWeight.Medium)
+                                Switch(checked = keepCorpus, onCheckedChange = setKeep)
+                            }
+                            Text(
+                                "Scans are normally discarded the moment they " +
+                                    "finish. Keeping the photographs alongside " +
+                                    "what the app read is what makes accuracy " +
+                                    "measurable: someone can write down what the " +
+                                    "pack really says, and an improved reader can " +
+                                    "be re-run over the same images to show it " +
+                                    "actually improved.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                            Text(
+                                corpusSummary,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                onShareCorpus?.let {
+                                    TextButton(onClick = it) { Text("Share corpus") }
+                                }
+                                onClearCorpus?.let {
+                                    TextButton(onClick = it) { Text("Delete kept scans") }
+                                }
                             }
                         }
                     }
