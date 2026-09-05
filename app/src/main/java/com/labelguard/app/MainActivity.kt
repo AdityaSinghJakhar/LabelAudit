@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
@@ -74,7 +75,14 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
     ) { uris -> viewModel.scanBulk(uris) }
 
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+        // Back walks this hierarchy instead of leaving the app. Each handler
+        // composes only while its screen is showing, and the early returns
+        // below keep exactly one of them active at a time. Nothing is
+        // registered for the viewfinder itself, so back from there still
+        // exits, which is what the system expects of a root screen.
         if (showCalibration) {
+            BackHandler { showCalibration = false }
+
             CalibrationScreen(
                 optics = viewModel.optics,
                 existing = calibration,
@@ -87,6 +95,8 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
         }
 
         if (showRoles) {
+            BackHandler { showRoles = false }
+
             RoleScreen(
                 role = role,
                 hasPasscode = viewModel.hasInspectorPasscode,
@@ -104,6 +114,8 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
         }
 
         if (showHistory) {
+            BackHandler { showHistory = false }
+
             HistoryScreen(
                 records = viewModel.filteredHistory(),
                 summary = viewModel.historySummary(),
@@ -125,6 +137,8 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
 
         val run = bulk
         if (run != null && scanState !is ScanState.Reported) {
+            BackHandler { viewModel.clearBulk() }
+
             BulkScreen(
                 run = run,
                 onOpen = viewModel::openBulkItem,
@@ -142,24 +156,32 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
         when (val state = scanState) {
             // The report replaces the viewfinder once a scan completes; it is
             // the deliverable, not an overlay on the photo.
-            is ScanState.Reported -> ReportScreen(
-                report = state.report,
-                onExportPdf = viewModel::exportPdf,
-                onRescan = viewModel::dismiss,
-                exportStatus = exportStatus,
-                onSharePdf = exported?.let { pdf -> { sharePdf(context, pdf) } },
-                onOpenPdf = exported?.let { pdf -> { openPdf(context, pdf) } },
-                onExportResults = viewModel::exportResults,
-                onShareResults = exportedResults
-                    .takeIf { it.isNotEmpty() }
-                    ?.let { files -> { shareResults(context, files) } },
-                // Absent for a shopper: registering a reference asserts what
-                // a correct pack of this product says, which someone who
-                // bought it off a shelf has no way to know.
-                onEnrol = { skuId: String -> viewModel.enrolLastScan(skuId) }
-                    .takeIf { role.can(Role.Capability.ENROL_REFERENCE) },
-                modifier = Modifier.padding(innerPadding)
-            )
+            is ScanState.Reported -> {
+                // The same thing the Rescan button does, so back from a report
+                // returns to whatever preceded it: the viewfinder after a
+                // single scan, or the bulk list when the report was opened
+                // from one, since clearing the state leaves the run in place.
+                BackHandler { viewModel.dismiss() }
+
+                ReportScreen(
+                    report = state.report,
+                    onExportPdf = viewModel::exportPdf,
+                    onRescan = viewModel::dismiss,
+                    exportStatus = exportStatus,
+                    onSharePdf = exported?.let { pdf -> { sharePdf(context, pdf) } },
+                    onOpenPdf = exported?.let { pdf -> { openPdf(context, pdf) } },
+                    onExportResults = viewModel::exportResults,
+                    onShareResults = exportedResults
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { files -> { shareResults(context, files) } },
+                    // Absent for a shopper: registering a reference asserts
+                    // what a correct pack of this product says, which someone
+                    // who bought it off a shelf has no way to know.
+                    onEnrol = { skuId: String -> viewModel.enrolLastScan(skuId) }
+                        .takeIf { role.can(Role.Capability.ENROL_REFERENCE) },
+                    modifier = Modifier.padding(innerPadding)
+                )
+            }
 
             // One screen, one layout. The role, history and upload
             // controls now live in the camera screen's own top bar; as
