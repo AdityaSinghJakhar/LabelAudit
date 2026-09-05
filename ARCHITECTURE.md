@@ -235,6 +235,7 @@ device.
 | `SharedPreferences labelguard_role` | Current role, passcode digest + salt |
 | `SharedPreferences labelguard_calibration` | Camera correction factor |
 | `getExternalFilesDir/reports/` | Exported PDFs and CSVs |
+| `getExternalFilesDir/corpus/` | Kept scans for evaluation — off by default |
 
 Plain JSON rather than a database: an inspector's registry is tens of products,
 the whole file is read once per scan, and JSON can be pulled off the device,
@@ -283,6 +284,35 @@ Tests are split by what they can honestly prove.
   actually tell us about its optics. A failure there is a finding about the
   hardware, not a defect.
 
+### Measuring accuracy
+
+Scans are normally discarded the moment they finish, which is right for a
+shopper's phone and fatal for evaluation. Two things are impossible without
+the images: nobody can say what a pack really declared, and no improved reader
+can be shown to be an improvement — it could only be run over *new*
+photographs, which measures something else.
+
+So an inspector can turn on **Keep scans for evaluation**. Each scan is then
+kept with its frames beside the prediction, in a layout the Python harness
+reads directly (`corpus/<id>/scan.json` + `frame-NN.jpg`).
+
+```
+python -m labelguard.eval.annotate --corpus corpus/ --truth truth/a1 --annotator a1
+python -m labelguard.eval --corpus corpus/ --truth truth/a1
+```
+
+The annotation tool is **blind by design**: it shows the image path and asks
+what the pack declares, never what the app read. An annotator shown a
+plausible answer agrees with it, and ground truth collected that way measures
+how persuasive the pipeline is rather than how right it is — inflating every
+figure without leaving a mark. Records carry `blind: true`; the escape hatch
+stamps `blind: false` so anchored annotations cannot be pooled with honest
+ones.
+
+Two annotators over the same corpus give Cohen's kappa, which says whether the
+task is well defined at all. If two careful readers disagree about what a pack
+declares, no pipeline can be scored against either of them.
+
 Regression tests for field-extraction bugs are built from **the raw OCR of the
 label that exhibited them**, transcribed from a real report, not from invented
 input. When a fix is written, it is verified by disabling it and confirming the
@@ -319,7 +349,7 @@ project is built against.
   references and upload of observations are separate opt-ins — the second sends
   a purchase-and-location trail and must never ride on the first.
 - **Second Schedule transcription** — the blocker on the height rules.
-- **An annotated evaluation set.** The Python harness in `SIH-2026/labelguard`
-  computes per-field accuracy with Wilson intervals and Cohen's κ against a
-  human annotator. It is worthless without labelled data, and that data is the
-  single highest-value unglamorous task remaining.
+- **An annotated evaluation set.** The corpus capture, the blind annotation
+  tool and the scorer are all built and tested end to end; what remains is the
+  unglamorous part, which is photographing packs and writing down what they
+  say. Nothing else on this list changes the project's standing as much.
