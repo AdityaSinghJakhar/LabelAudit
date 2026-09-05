@@ -4,19 +4,12 @@ pydantic==2.10.4
 pydantic-settings==2.7.1
 python-multipart==0.0.20
 pillow==12.3.0
-
-# PaddleOCR 2.9.1 requires numpy<2, and imgaug (a transitive dep) uses APIs
-# removed in numpy 2.0. scipy/scikit-image/opencv are pinned to the last
-# releases built against the numpy 1.x ABI so the stack stays consistent.
-numpy==1.26.4
-scipy==1.13.1
-scikit-image==0.24.0
-opencv-python==4.10.0.84
-opencv-contrib-python==4.10.0.84
-opencv-python-headless==4.10.0.84
-paddlepaddle==3.0.0
-paddleocr==2.9.1
-
-# Domain logic (rules engine, field extraction, measurement) — installed
+sqlalchemy
+alembic
+psycopg[binary]
+python-jose
+passlib
+bcrypt
+# Domain logic (rules engine, field extraction, measurement) ï¿½ installed
 # editable from the sibling labelguard/ package during development.
 -e ../labelguard
