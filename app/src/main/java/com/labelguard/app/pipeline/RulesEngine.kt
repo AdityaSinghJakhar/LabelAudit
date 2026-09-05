@@ -528,6 +528,12 @@ object RulesEngine {
      * decides. Neither an unverified statutory figure nor an unvalidated
      * device tolerance may produce an accusation on its own.
      */
+    private fun provenanceOf(measured: Scale.Measurement): String =
+        when (measured.source) {
+            Scale.Source.CALIBRATED_DEVICE -> " (calibrated camera)"
+            Scale.Source.REPORTED_OPTICS -> " (uncalibrated; the device's own estimate)"
+        }
+
     private fun checkMinHeight(rule: Ruleset.Rule, context: Context): Outcome {
         val measured = context.capHeights[rule.field] ?: return context
             .heightScaleUnavailable
@@ -559,25 +565,32 @@ object RulesEngine {
         if (unconfirmed.isNotEmpty()) {
             return Outcome(
                 RuleStatus.NEEDS_REVIEW,
-                "Measured ${measured.describe()} against a minimum of " +
-                    "%.2f mm. Reported for review because ".format(minMm) +
+                "Measured ${measured.describe()}${provenanceOf(measured)} against " +
+                    "a minimum of %.2f mm. Reported for review because ".format(minMm) +
                     unconfirmed.joinToString(" and ") + "."
             )
         }
 
+        // Where the figure came from belongs in the finding: an uncalibrated
+        // reading and a calibrated one differ by sixfold in precision, and a
+        // reader comparing two reports has no other way to tell them apart.
+        val provenance = provenanceOf(measured)
+
         return when {
             measured.certainlyAtLeast(minMm) -> Outcome(
                 RuleStatus.PASS,
-                "Measured ${measured.describe()}, at or above %.2f mm".format(minMm)
+                "Measured ${measured.describe()}, at or above %.2f mm".format(minMm) +
+                    provenance
             )
             measured.certainlyBelow(minMm) -> Outcome(
                 RuleStatus.FAIL,
-                "Measured ${measured.describe()}, entirely below %.2f mm".format(minMm)
+                "Measured ${measured.describe()}, entirely below %.2f mm".format(minMm) +
+                    provenance
             )
             else -> Outcome(
                 RuleStatus.NEEDS_REVIEW,
                 "Measured ${measured.describe()}, which spans the %.2f mm "
-                    .format(minMm) + "minimum; the photograph cannot settle it"
+                    .format(minMm) + "minimum; the photograph cannot settle it" + provenance
             )
         }
     }
