@@ -9,33 +9,19 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.labelguard.app.report.PdfSharing
-import androidx.compose.material3.TextButton
 import com.labelguard.app.ui.screens.BulkScreen
 import com.labelguard.app.ui.screens.CameraScreen
 import com.labelguard.app.auth.Role
@@ -175,48 +161,27 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
                 modifier = Modifier.padding(innerPadding)
             )
 
-            else -> Box(modifier = Modifier.fillMaxSize()) {
-                CameraScreen(
-                    onSidesCaptured = viewModel::scanSides,
-                    optics = viewModel.optics,
-                    modifier = Modifier.padding(innerPadding)
-                )
-
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(innerPadding)
-                        .padding(16.dp)
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        RoleButton(role) { showRoles = true }
-                        HistoryButton(history.size) { showHistory = true }
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(innerPadding)
-                        .padding(16.dp)
-                        .fillMaxWidth()
-                ) {
-                    statusMessage(state)?.let { StatusPanel(it) }
-
-                    TextButton(
-                        onClick = {
-                            pickImages.launch(
-                                PickVisualMediaRequest(
-                                    ActivityResultContracts.PickVisualMedia.ImageOnly
-                                )
-                            )
-                        },
-                        modifier = Modifier.align(Alignment.TopEnd)
-                    ) {
-                        Text("Upload images")
-                    }
-                }
-            }
+            // One screen, one layout. The role, history and upload
+            // controls now live in the camera screen's own top bar; as
+            // separate overlays here they had no way to avoid each other and
+            // collided in the top-right corner.
+            else -> CameraScreen(
+                onSidesCaptured = viewModel::scanSides,
+                optics = viewModel.optics,
+                roleLabel = role.label,
+                historyCount = history.size,
+                onOpenRole = { showRoles = true },
+                onOpenHistory = { showHistory = true },
+                onUpload = {
+                    pickImages.launch(
+                        PickVisualMediaRequest(
+                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                        )
+                    )
+                },
+                statusMessage = statusMessage(state),
+                modifier = Modifier.padding(innerPadding)
+            )
         }
     }
 }
@@ -234,22 +199,6 @@ private fun shareResults(context: Context, files: List<java.io.File>) {
 private fun openPdf(context: Context, pdf: ExportedPdf) {
     runCatching { context.startActivity(PdfSharing.openIntent(context, pdf.file)) }
         .onFailure { Toast.makeText(context, "No PDF viewer installed", Toast.LENGTH_SHORT).show() }
-}
-
-/** Shows the active role, and opens the switcher. */
-@Composable
-private fun RoleButton(role: Role, onClick: () -> Unit) {
-    androidx.compose.material3.FilledTonalButton(onClick = onClick) {
-        androidx.compose.material3.Text(role.label)
-    }
-}
-
-/** Entry to the inspection history, showing how much is recorded. */
-@Composable
-private fun HistoryButton(count: Int, onClick: () -> Unit) {
-    androidx.compose.material3.FilledTonalButton(onClick = onClick) {
-        androidx.compose.material3.Text(if (count == 0) "History" else "History ($count)")
-    }
 }
 
 private fun statusMessage(state: ScanState): String? = when (state) {
@@ -280,24 +229,5 @@ private fun formatNotAssessable(state: ScanState.NotAssessable): String {
             append(state.detail.entries.joinToString(", ") { "${it.key}=${it.value}" })
             append(")")
         }
-    }
-}
-
-@Composable
-private fun StatusPanel(message: String, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        shape = MaterialTheme.shapes.medium,
-        tonalElevation = 3.dp
-    ) {
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier
-                .heightIn(max = 260.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 10.dp)
-        )
     }
 }
