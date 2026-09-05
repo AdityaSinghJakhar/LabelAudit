@@ -229,9 +229,15 @@ class Scan(Base):
     shard_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     device: Mapped[Device] = relationship(back_populates="scans")
+
     checks: Mapped[list["ScanCheck"]] = relationship(
-        back_populates="scan", cascade="all, delete-orphan"
-    )
+    back_populates="scan",
+    cascade="all, delete-orphan"
+)
+    registry_matches: Mapped[list["MatchesRegistry"]] = relationship(
+    back_populates="scan",
+    cascade="all, delete-orphan",
+)
 
     @property
     def title(self) -> str:
@@ -273,3 +279,82 @@ class ScanCheck(Base):
     __table_args__ = (
         UniqueConstraint("scan_id", "rule_id", name="uq_scan_check_rule"),
     )
+
+
+class MatchesRegistry(Base):
+    """
+    Stores the result of matching extracted identity/fields from a scan
+    against a registered SKU.
+
+    This is an audit record of the matching decision.
+
+    The actual OCR and spatial matching happen before this record is
+    persisted. The registry stores:
+      - which scan was matched
+      - which SKU was selected, if any
+      - match status
+      - confidence score
+      - rejection threshold used
+      - matching algorithm
+      - evidence used to make the decision
+      - extracted identity used for matching
+    """
+
+    __tablename__ = "matches_registry"
+
+    id: Mapped[str] = mapped_column(
+        String,
+        primary_key=True,
+        default=_uuid,
+    )
+
+    scan_id: Mapped[str] = mapped_column(
+        ForeignKey("scans.id"),
+        index=True,
+    )
+
+    sku_id: Mapped[str | None] = mapped_column(
+        ForeignKey("skus.id"),
+        nullable=True,
+        index=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String,
+        index=True,
+    )
+    # MATCHED | REJECTED | NO_CANDIDATE
+
+    score: Mapped[float] = mapped_column(
+        Float,
+    )
+
+    rejection_threshold: Mapped[float] = mapped_column(
+        Float,
+    )
+
+    match_method: Mapped[str] = mapped_column(
+        String,
+    )
+    # HUNGARIAN | SPATIAL_HUNGARIAN
+
+    evidence: Mapped[list | dict] = mapped_column(
+        JSON,
+        default=list,
+    )
+
+    extracted_identity: Mapped[dict] = mapped_column(
+        JSON,
+        default=dict,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_now,
+    )
+
+    scan: Mapped["Scan"] = relationship(
+    back_populates="registry_matches",
+)
+
+    sku: Mapped["Sku | None"] = relationship()
