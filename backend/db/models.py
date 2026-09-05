@@ -1,12 +1,27 @@
 """
-Persistence for the sync backend.
+Persistence for the backend.
 
-OCR, field extraction, consensus and rule evaluation all run on the phone
-(see ARCHITECTURE.md). Nothing in this file stores an image or recomputes a
-verdict -- every table here stores the *output* of a scan the device already
-finished, or configuration (roles, calibration, SKU references) that needs
-to be shared across devices instead of trapped in one phone's local JSON
-store.
+UPDATED (server-OCR branch): this is no longer sync-only. Two kinds of scan
+now exist, distinguished by Scan.source:
+
+  "device"     OCR, field extraction, consensus and rule evaluation all ran
+               on the phone (the original ARCHITECTURE.md design). This
+               table stores the *output* of a scan the device already
+               finished -- no image, no recomputation.
+
+  "server_ocr" OCR ran here, on the backend (see app/services/ocr_service.py),
+               against an image the client uploaded. Field extraction and
+               rule evaluation are also server-side (app/services/
+               field_extraction.py, app/services/rules_service.py) and are
+               DELIBERATELY NARROWER than the on-device pipeline: presence
+               checks only, no spatial/date/height reasoning yet. See those
+               modules' docstrings for exactly what is and isn't assessed,
+               and HANDOFF.md's governing rule -- never emit a verdict the
+               pipeline cannot substantiate -- applies here exactly as it
+               does on the phone.
+
+Configuration that needs to be shared across devices (roles, calibration,
+SKU references) is unaffected by this change.
 
 Mirrors, on the Kotlin side:
   devices       <- auth/Role.kt, auth/RoleStore.kt
@@ -159,15 +174,15 @@ class Sku(Base):
 
 class Scan(Base):
     """
-    One completed on-device scan, synced after the phone has already run
-    OCR, extraction, consensus and rules and reached a verdict.
+    One completed scan -- either synced from the phone after it finished its
+    own pipeline, or run here on the backend against an uploaded image. See
+    Scan.source and the module docstring above.
 
-    Mirrors history/ScanRecord.kt. This table never stores frames or
-    bounding boxes -- only what a reader needs later: which product, what
-    verdict, under which ruleset version. rawLines is kept because
-    HANDOFF.md's regression-test discipline is built from real OCR output;
-    if that habit ever moves server-side, the raw text needs to already be
-    there to draw from.
+    Mirrors history/ScanRecord.kt for the device case. This table never
+    stores frames or bounding boxes -- only what a reader needs later: which
+    product, what verdict, under which ruleset version. rawLines is kept
+    because HANDOFF.md's regression-test discipline is built from real OCR
+    output.
 
     ruleset_version is not optional. ScanRecord.kt's own docstring: "a
     verdict recorded under one version of the rules cannot be defended by
@@ -176,13 +191,19 @@ class Scan(Base):
 
     __tablename__ = "scans"
 
-    # Client-generated UUID (matches ScanRecord.id from the phone) rather
-    # than a server-assigned id, so a re-POST of the same scan (e.g. after a
-    # dropped connection) can be recognised and treated as idempotent
-    # instead of creating a duplicate.
+    # Client-generated UUID when the device produces one (matches
+    # ScanRecord.id from the phone), or server-generated for a fresh
+    # server_ocr scan -- either way, a re-POST of the same id is treated as
+    # idempotent instead of creating a duplicate.
     id: Mapped[str] = mapped_column(String, primary_key=True)
 
     device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), index=True)
+
+    # "device" (phone ran the whole pipeline, this row is a sync) or
+    # "server_ocr" (this backend ran OCR + naive extraction + rules against
+    # an uploaded image). See the module docstring for what each implies
+    # about how much the recorded checks actually assessed.
+    source: Mapped[str] = mapped_column(String, default="device", index=True)
 
     scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -199,6 +220,13 @@ class Scan(Base):
 
     frames_used: Mapped[int] = mapped_column(Integer, default=0)
     raw_lines: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    # --- server_ocr only. Null for synced device scans. ---
+    image_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    ocr_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    ocr_mean_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ocr_processing_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    shard_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     device: Mapped[Device] = relationship(back_populates="scans")
     checks: Mapped[list["ScanCheck"]] = relationship(
