@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.labelguard.app.auth.Role
 import com.labelguard.app.auth.RoleStore
+import com.labelguard.app.eval.CorpusStore
 import com.labelguard.app.history.HistoryCsv
 import com.labelguard.app.measure.Calibration
 import com.labelguard.app.measure.CalibrationStore
@@ -104,6 +105,50 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      * NOT_ASSESSABLE on a bulk upload rather than reporting a size.
      */
     val optics = CameraOptics()
+
+    private val corpusStore = CorpusStore(application)
+
+    /**
+     * Whether completed scans are kept for evaluation.
+     *
+     * Off by default and not persisted deliberately: keeping images is a
+     * decision taken for a measuring session, and a setting that survived a
+     * restart would quietly accumulate a shopper's groceries on disk long
+     * after anyone was measuring anything.
+     */
+    private val _keepCorpus = MutableStateFlow(false)
+    val keepCorpus: StateFlow<Boolean> = _keepCorpus.asStateFlow()
+
+    private val _corpusSummary = MutableStateFlow(corpusStore.summary())
+    val corpusSummary: StateFlow<String> = _corpusSummary.asStateFlow()
+
+    fun setKeepCorpus(enabled: Boolean) {
+        if (!can(Role.Capability.MANAGE_REGISTRY)) return
+        _keepCorpus.value = enabled
+        _corpusSummary.value = corpusStore.summary()
+    }
+
+    fun clearCorpus() {
+        if (!can(Role.Capability.MANAGE_REGISTRY)) return
+        corpusStore.clear()
+        _corpusSummary.value = corpusStore.summary()
+    }
+
+    /** Every kept file, for sharing the corpus off the device in one go. */
+    fun corpusFiles(): List<File> = corpusStore.allFiles()
+
+    /**
+     * Keep a finished scan alongside the frames it was read from.
+     *
+     * Called before the frames are deleted, which is the whole point: a
+     * prediction with no image behind it can be neither annotated nor
+     * re-scored, so accuracy could only ever be asserted.
+     */
+    private fun keepForEvaluation(report: ScanReport, frames: List<File>) {
+        if (!_keepCorpus.value) return
+        corpusStore.keep(report, frames)
+        _corpusSummary.value = corpusStore.summary()
+    }
 
     private val calibrationStore = CalibrationStore(application)
 
@@ -298,6 +343,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val report = analyseSides(sides)
                 record(report)
+                // Before the finally block below destroys them.
+                keepForEvaluation(report, frames)
                 _state.value = ScanState.Reported(report)
             } catch (e: Exception) {
                 _state.value = ScanState.Failed(e.message ?: "Could not read the label")
@@ -469,6 +516,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                         // whether or not anyone taps into each one.
                         val report = analyse(listOf(file))
                         record(report)
+                        keepForEvaluation(report, listOf(file))
                         BulkItem(name, report, error = null)
                     } finally {
                         file.delete()
