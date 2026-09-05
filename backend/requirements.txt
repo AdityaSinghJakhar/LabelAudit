@@ -16,3 +16,7 @@ opencv-contrib-python==4.10.0.84
 opencv-python-headless==4.10.0.84
 paddlepaddle==3.0.0
 paddleocr==2.9.1
+
+# Domain logic (rules engine, field extraction, measurement) — installed
+# editable from the sibling labelguard/ package during development.
+-e ../labelguard

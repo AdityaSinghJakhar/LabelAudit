@@ -1,0 +1,355 @@
+# =============================================================================
+# LabelGuard AI — compliance ruleset
+#
+# COPY. The reviewed original lives in the LabelGuard Python repo at
+# labelguard/rules/ruleset.yaml. This file is the on-device copy loaded from
+# assets; keep the two in step when either changes. RulesetParityTest asserts
+# the rule ids and citations here match what the engine expects.
+#
+# Scope: ONE flat-packaged SKU. Cylindrical products are out of scope; the
+# planarity gate in capture/gate.py rejects them before any rule runs.
+#
+# CITATION STATUS
+#   Clause references below are transcribed from the Legal Metrology
+#   (Packaged Commodities) Rules, 2011. They are reproduced here so that every
+#   finding can be traced to a statutory source, but they have NOT been
+#   verified against the current amended text by a legal reviewer. Treat the
+#   `citation` strings as provisional until that review happens.
+#
+#   Where a rule depends on a numeric threshold drawn from a statutory table
+#   (notably CAP-01, which reads Rule 9's size table), the threshold is
+#   carried in `params` and marked `needs_legal_confirmation: true`. Those
+#   rules emit NEEDS_REVIEW rather than FAIL until the value is confirmed —
+#   the engine must never assert a violation it cannot substantiate.
+# =============================================================================
+
+version: "2026.1.0"
+
+source_citation: >-
+  Legal Metrology (Packaged Commodities) Rules, 2011 (as amended),
+  Chapter II — Provisions applicable to packages intended for retail sale.
+
+# Which vertical text measurement the engine compares against statutory
+# minimums. cap_height = height of a capital letter, excluding ascenders and
+# descenders. See measure/cap_height.py.
+height_metric: cap_height
+
+# -----------------------------------------------------------------------------
+# Exemptions — evaluated BEFORE rules.
+#
+# When an exemption's condition holds, every rule id in `exempts` is skipped and
+# reported as EXEMPT carrying the exemption's citation. An exempted rule never
+# contributes a violation.
+# -----------------------------------------------------------------------------
+exemptions:
+  - id: EX-SMALL-PACK
+    condition:
+      field: net_quantity
+      op: lte
+      value: 10
+      unit: g
+    exempts:
+      - CARE-01
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 26 — exemption for
+      packages containing a commodity of net weight or measure of 10 g or 10 ml
+      or less.
+
+  - id: EX-SMALL-PACK-ML
+    condition:
+      field: net_quantity
+      op: lte
+      value: 10
+      unit: ml
+    exempts:
+      - CARE-01
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 26 — exemption for
+      packages containing a commodity of net weight or measure of 10 g or 10 ml
+      or less.
+
+# -----------------------------------------------------------------------------
+# Rules
+#
+# check.type values are implemented in rules/engine.py:
+#   field_present     — field extracted and non-empty
+#   matches_registry  — extracted value equals the registry value for this SKU
+#   role_present      — an address carrying the named role was found
+#   min_height_mm     — measured cap height >= params.min_mm
+# -----------------------------------------------------------------------------
+rules:
+  - id: MRP-01
+    name: "Price is declared"
+    field: mrp
+    check:
+      type: field_present
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(e) — retail
+      sale price of the package.
+
+  - id: MRP-02
+    name: "Price matches the registered value"
+    field: mrp
+    check:
+      type: matches_registry
+      registry_key: mrp_exact
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(e) — the
+      declared retail sale price must be the maximum retail price for the
+      package as registered.
+
+  - id: QTY-01
+    name: "Net quantity is declared"
+    field: net_quantity
+    check:
+      type: field_present
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(c) — net
+      quantity in terms of standard unit of weight or measure.
+
+  - id: QTY-02
+    name: "Net quantity matches the registered pack size"
+    field: net_quantity
+    check:
+      type: matches_registry
+      registry_key: net_quantity
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(c) — declared
+      net quantity must correspond to the registered pack size.
+
+  - id: BRAND-01
+    name: "Brand matches the registered name"
+    field: brand
+    check:
+      type: matches_registry
+      registry_key: brand_strings
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(b) — common
+      or generic name of the commodity contained in the package.
+
+  - id: MFR-01
+    name: "Manufacturer address is declared"
+    # Must name a field the extractor actually produces, otherwise the finding
+    # carries no observed value, no agreement and no evidence crop.
+    field: manufacturer_address
+    check:
+      type: role_present
+      role: manufacturer
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(a) — name and
+      complete address of the manufacturer, or of the packer or importer where
+      the manufacturer is not the packer.
+
+  - id: CARE-01
+    name: "Consumer care details are declared"
+    field: consumer_care
+    check:
+      type: field_present
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(f) — name,
+      address, telephone number and email address of the person who can be
+      contacted in case of consumer complaints.
+
+  - id: TAX-01
+    name: "Price is stated as inclusive of all taxes"
+    field: tax_inclusive
+    check:
+      type: field_present
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 2(m) read with
+      r. 6(1)(e) — the retail sale price must be declared as the maximum price
+      inclusive of all taxes.
+
+  - id: MFG-01
+    name: "Manufacturing or packing date is declared"
+    field: mfg_date
+    check:
+      type: field_present
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(d) — the
+      month and year in which the commodity is manufactured, pre-packed or
+      imported.
+
+  - id: MFG-02
+    name: "Manufacturing date has actually passed"
+    field: mfg_date
+    check:
+      # An internal-consistency check on the declared value, not a separate
+      # statutory requirement: r. 6(1)(d) obliges the pack to declare the
+      # month and year of manufacture, and a month that has not arrived
+      # cannot be the month in which the commodity was manufactured. Asserted
+      # only when the earliest day the marking could mean is still ahead, so
+      # "12/2025" read during December 2025 is not a violation.
+      type: date_not_future
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 6(1)(d) — the
+      month and year in which the commodity is manufactured, pre-packed or
+      imported.
+
+  - id: BATCH-01
+    name: "Batch or lot number is declared"
+    field: batch_number
+    check:
+      type: field_present
+    citation: >-
+      Food Safety and Standards (Labelling and Display) Regulations, 2020,
+      reg. 5 — lot, code or batch identification of the pre-packaged food.
+
+  - id: EXPIRY-01
+    name: "Date marking a consumer can resolve"
+    field: expiry
+    check:
+      # A period such as "best before 2 months from the date of packing" only
+      # yields a date if the date it counts from is declared. Without that,
+      # the consumer can determine no date and the marking fails on its own
+      # terms.
+      type: date_marking
+      relative_requires: mfg_date
+    citation: >-
+      Food Safety and Standards (Labelling and Display) Regulations, 2020,
+      reg. 5 — date marking: "best before" or "use by" as applicable to the
+      food.
+
+  - id: EXPIRY-02
+    name: "Date marking falls after the manufacturing date"
+    field: expiry
+    check:
+      # Two declarations on the same pack that contradict each other. Only
+      # asserted when the ranges cannot overlap; where they do, the order
+      # cannot be settled from the label and the finding is NEEDS_REVIEW.
+      type: date_order
+      after_field: mfg_date
+    citation: >-
+      Food Safety and Standards (Labelling and Display) Regulations, 2020,
+      reg. 5 — date marking: "best before" or "use by" as applicable to the
+      food.
+
+  - id: EXPIRY-03
+    name: "Pack is within its declared date marking"
+    field: expiry
+    check:
+      # Resolves a relative marking ("best before 9 months from packing")
+      # against the declared packing date before comparing. Asserted only
+      # when the latest day the marking could mean has already gone.
+      #
+      # NOTE: this describes the pack as at the moment of scanning, judged
+      # against the device clock. It is a finding about stock on a shelf, not
+      # about how the label is printed, and the citation below is the date
+      # marking requirement rather than a prohibition on sale — which lives in
+      # the FSS Act and has not been reviewed against this rule.
+      type: not_expired
+      relative_requires: mfg_date
+    citation: >-
+      Food Safety and Standards (Labelling and Display) Regulations, 2020,
+      reg. 5 — date marking: "best before" or "use by" as applicable to the
+      food.
+
+  - id: FSSAI-01
+    name: "FSSAI licence number is displayed"
+    field: fssai_licence
+    check:
+      type: field_present
+    citation: >-
+      Food Safety and Standards (Licensing and Registration of Food
+      Businesses) Regulations, 2011 — the FSSAI licence or registration number
+      of the food business operator shall be displayed on the label.
+
+# DEFERRED — CAP-01 (text height, r. 9)
+#
+# Disabled for the first prototype, which targets a nitrogen-flushed chips
+# pack. Two independent blockers:
+#
+#   1. No scale source. Measuring height in millimetres needs a known physical
+#      reference in frame. The ArUco marker approach was removed as
+#      impractical for a domed pillow pack, whose printed face is neither flat
+#      nor coplanar with anything you could place beside it.
+#   2. The Rule 9 threshold is unconfirmed, so the rule could only ever emit
+#      NEEDS_REVIEW even with a scale.
+#
+# It is commented out rather than deleted because leaving it active would make
+# every scan NOT_ASSESSABLE forever: that status outranks FAIL and PASS, so one
+# permanently unmeasurable rule suppresses every other verdict the pipeline can
+# legitimately reach.
+#
+# To restore: add a scale source, confirm the r. 9 table row for this SKU's net
+# quantity and panel area, set needs_legal_confirmation to false, and uncomment.
+#
+  - id: CAP-01
+    name: "Price is printed large enough to read"
+    field: mrp
+    check:
+      type: min_height_mm
+      params:
+        # TWO unverified numbers stand between this rule and an accusation.
+        #
+        # min_mm is a placeholder. Rule 9 sizes characters against the area of
+        # the principal display panel, and that table has not been transcribed
+        # or checked by a legal reviewer.
+        #
+        # needs_calibration says the measurement's own tolerance — how far a
+        # phone's reported focus distance may be off — is assumed rather than
+        # measured. See Scale.TOLERANCE_APPROXIMATE.
+        #
+        # While either flag stands the rule reports its measurement and asks
+        # for review. It cannot fail a pack on an unverified threshold or an
+        # unvalidated tolerance.
+        min_mm: 1.0
+        needs_legal_confirmation: true
+        needs_calibration: true
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 9 — size of
+      letters and numerals in a declaration.
+
+  - id: CAP-02
+    name: "Net quantity is printed large enough to read"
+    field: net_quantity
+    check:
+      type: min_height_mm
+      params:
+        min_mm: 1.0
+        needs_legal_confirmation: true
+        needs_calibration: true
+    citation: >-
+      Legal Metrology (Packaged Commodities) Rules, 2011, r. 9 — size of
+      letters and numerals in a declaration.
+
+# -----------------------------------------------------------------------------
+# Registry — the single in-scope SKU.
+#
+# UNPOPULATED. These are facts about one physical package and cannot be
+# inferred from the statute or from code. Until they are filled in, every rule
+# of type `matches_registry` returns NOT_ASSESSABLE("registry_unpopulated")
+# rather than guessing — see rules/engine.py.
+#
+# Fill each field from the physical product, then set `populated: true`.
+# -----------------------------------------------------------------------------
+registry:
+  populated: false
+
+  sku_id: null
+
+  # Every acceptable rendering of the brand as printed, including case and
+  # spacing variants the OCR may return.
+  brand_strings: []
+
+  # Addresses by declared role. A role left null is treated as "not declared
+  # for this SKU", which is different from "not found on the label".
+  addresses:
+    manufacturer: null
+    packer: null
+    importer: null
+    marketer: null
+
+  consumer_care:
+    name: null
+    address: null
+    phone: null
+    email: null
+
+  # Exact printed MRP in rupees, e.g. 45.00
+  mrp_exact: null
+
+  # Exact printed net quantity, e.g. {value: 500, unit: g}
+  net_quantity:
+    value: null
+    unit: null
