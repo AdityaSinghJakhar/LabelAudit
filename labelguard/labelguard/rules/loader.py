@@ -136,6 +136,7 @@ class Ruleset:
         )
         return Ruleset.parse(text)
 
+
     @staticmethod
     def parse(yaml_text: str) -> "Ruleset":
         root = yaml.safe_load(yaml_text)
@@ -158,6 +159,13 @@ class Ruleset:
             rules=rules,
             registry=registry,
         )
+
+
+def load_ruleset(path: Optional[Union[str, Path]] = None) -> Ruleset:
+    """Convenience function to load canonical ruleset or ruleset from path."""
+    if path is not None:
+        return Ruleset.load(path)
+    return Ruleset.load_canonical()
 
 
 def _require_str(root: dict, key: str) -> str:

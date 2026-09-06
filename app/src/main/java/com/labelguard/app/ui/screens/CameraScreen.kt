@@ -3,6 +3,8 @@ package com.labelguard.app.ui.screens
 import android.Manifest
 import androidx.camera.core.ImageCapture
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -12,15 +14,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -41,18 +39,50 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.labelguard.app.ui.components.CameraPreview
+import com.labelguard.app.ui.components.CaptureReticle
 import com.labelguard.app.ui.components.FramingGrid
+import com.labelguard.app.ui.components.PrimaryButton
+import com.labelguard.app.ui.components.SecondaryButton
+import com.labelguard.app.ui.theme.AppColors
 import com.labelguard.app.utils.captureBurst
 import com.labelguard.app.measure.CameraOptics
 import com.labelguard.app.viewmodel.SideCapture
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
-import java.io.File
+
+/**
+ * A control over the viewfinder: dark, translucent, bordered.
+ *
+ * Buttons here sit on whatever colour the shelf happens to be, so each one
+ * carries its own ground rather than relying on the scrim behind it.
+ */
+@Composable
+private fun GlassButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    active: Boolean = false
+) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelMedium,
+        color = if (active) AppColors.Teal else Color.White,
+        modifier = modifier
+            .background(Color.White.copy(alpha = 0.14f), RoundedCornerShape(percent = 50))
+            .border(
+                1.dp,
+                if (active) AppColors.Teal.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.22f),
+                RoundedCornerShape(percent = 50)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    )
+}
 
 /**
  * Navigation over the viewfinder, collapsed behind one control.
  *
- * A plain glyph rather than a Material icon: this is a layout fix, and adding
+ * A plain label rather than a Material icon: this is a layout fix, and adding
  * an icon dependency to place one button would be a heavier change than the
  * problem warrants.
  */
@@ -67,11 +97,7 @@ private fun ViewfinderMenu(
     var open by remember { mutableStateOf(false) }
 
     Box {
-        FilterChip(
-            selected = false,
-            onClick = { open = true },
-            label = { Text("Menu") }
-        )
+        GlassButton(label = "Menu", onClick = { open = true })
 
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(
@@ -197,6 +223,8 @@ private fun CameraContent(
             FramingGrid(modifier = Modifier.fillMaxSize())
         }
 
+        CaptureReticle(modifier = Modifier.fillMaxSize())
+
         // --- one top bar
         //
         // Everything that sits over the viewfinder shares this layout. It used
@@ -214,11 +242,11 @@ private fun CameraContent(
                 .fillMaxWidth()
                 .background(
                     Brush.verticalGradient(
-                        listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)
+                        listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent)
                     )
                 )
                 .padding(horizontal = 12.dp)
-                .padding(top = 8.dp, bottom = 20.dp),
+                .padding(top = 8.dp, bottom = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
@@ -227,16 +255,16 @@ private fun CameraContent(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (torchAvailable) {
-                    FilterChip(
-                        selected = torchOn,
-                        onClick = { torchOn = !torchOn },
-                        label = { Text(if (torchOn) "Torch on" else "Torch") }
+                    GlassButton(
+                        label = if (torchOn) "Torch on" else "Torch",
+                        active = torchOn,
+                        onClick = { torchOn = !torchOn }
                     )
                 }
-                FilterChip(
-                    selected = showGrid,
-                    onClick = { showGrid = !showGrid },
-                    label = { Text("Grid") }
+                GlassButton(
+                    label = "Grid",
+                    active = showGrid,
+                    onClick = { showGrid = !showGrid }
                 )
 
                 Box(modifier = Modifier.weight(1f))
@@ -250,13 +278,43 @@ private fun CameraContent(
                 )
             }
 
+            // What the capture is on, stated where the eye already is. A pack
+            // needs several faces and the operator has no other way to know
+            // which one the app is waiting for.
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(top = 10.dp)
+            ) {
+                Text(
+                    text = "Product capture",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White
+                )
+                Text(
+                    text = if (captured.isEmpty()) {
+                        "NEXT: " + nextSide.uppercase()
+                    } else {
+                        captured.size.toString() + " SIDE" +
+                            (if (captured.size == 1) "" else "S") +
+                            " CAPTURED · NEXT: " + nextSide.uppercase()
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppColors.Teal
+                )
+            }
+
             // Directly under the bar rather than layered over it, so a long
             // message pushes nothing off screen and covers no control.
             statusMessage?.let {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                    shape = MaterialTheme.shapes.medium,
-                    modifier = Modifier.padding(top = 10.dp)
+                Box(
+                    modifier = Modifier
+                        .padding(top = 12.dp)
+                        .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(12.dp))
+                        .border(
+                            1.dp,
+                            Color.White.copy(alpha = 0.18f),
+                            RoundedCornerShape(12.dp)
+                        )
                 ) {
                     // Capped and scrollable: the NOT_ASSESSABLE explanation
                     // runs to several lines and would otherwise push the
@@ -264,6 +322,7 @@ private fun CameraContent(
                     Text(
                         text = it,
                         style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .heightIn(max = 240.dp)
@@ -281,30 +340,36 @@ private fun CameraContent(
                 .fillMaxWidth()
                 .background(
                     Brush.verticalGradient(
-                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.65f))
                     )
                 )
                 .padding(horizontal = 20.dp)
-                .padding(top = 32.dp, bottom = 40.dp),
+                .padding(top = 32.dp, bottom = 36.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             if (captured.isNotEmpty()) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    Text(
-                        text = "Captured: " + captured.joinToString(", ") { it.label },
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                    )
-                }
+                Text(
+                    text = "Captured: " + captured.joinToString(", ") { it.label },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White,
+                    modifier = Modifier
+                        .background(
+                            Color.White.copy(alpha = 0.14f),
+                            RoundedCornerShape(percent = 50)
+                        )
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
             }
 
-            Button(
+            PrimaryButton(
+                text = when {
+                    capturing -> "Hold still — $progress of $FRAMES_PER_SIDE"
+                    captured.isEmpty() -> "Capture front"
+                    else -> "Add $nextSide"
+                },
                 onClick = {
-                    if (capturing) return@Button
+                    if (capturing) return@PrimaryButton
                     scope.launch {
                         capturing = true
                         try {
@@ -325,32 +390,28 @@ private fun CameraContent(
                 },
                 enabled = !capturing,
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    when {
-                        capturing -> "Hold still — $progress of $FRAMES_PER_SIDE"
-                        captured.isEmpty() -> "Capture front"
-                        else -> "Add $nextSide"
-                    }
-                )
-            }
+            )
 
             if (captured.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    OutlinedButton(
+                    SecondaryButton(
+                        text = "Discard",
                         onClick = {
                             captured.forEach { side -> side.frames.forEach { it.delete() } }
                             captured.clear()
                         },
                         enabled = !capturing,
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Discard")
-                    }
-                    Button(
+                    )
+                    PrimaryButton(
+                        text = if (captured.size == 1) {
+                            "Analyse 1 side"
+                        } else {
+                            "Analyse ${captured.size} sides"
+                        },
                         onClick = {
                             val sides = captured.toList()
                             captured.clear()
@@ -358,9 +419,7 @@ private fun CameraContent(
                         },
                         enabled = !capturing,
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text(if (captured.size == 1) "Analyse 1 side" else "Analyse ${captured.size} sides")
-                    }
+                    )
                 }
             }
         }
@@ -375,21 +434,31 @@ private fun PermissionRationale(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .background(AppColors.Canvas)
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = "Camera access is needed to photograph product labels.",
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
+            text = "Camera access is needed",
+            style = MaterialTheme.typography.headlineSmall,
+            color = AppColors.Ink,
+            textAlign = TextAlign.Center
         )
-        Button(
+        Text(
+            text = "The camera photographs product labels. Nothing leaves the " +
+                "device — the reading and the rules both run here.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = AppColors.InkMuted,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp)
+        )
+        PrimaryButton(
+            text = "Grant camera access",
             onClick = onRequest,
-            modifier = Modifier.padding(top = 16.dp)
-        ) {
-            Text("Grant camera access")
-        }
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 20.dp)
+        )
     }
 }

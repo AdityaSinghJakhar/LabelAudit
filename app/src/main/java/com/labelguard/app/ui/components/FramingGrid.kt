@@ -30,3 +30,37 @@ fun FramingGrid(modifier: Modifier = Modifier) {
         }
     }
 }
+
+/**
+ * Corner brackets marking the area to fill with the pack.
+ *
+ * Brackets rather than a full rectangle: a closed frame draws a line across
+ * the label itself, and the operator ends up framing to the line instead of
+ * to the text. The corners say "fill this" while hiding almost nothing.
+ */
+@Composable
+fun CaptureReticle(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val colour = Color.White.copy(alpha = 0.85f)
+        val stroke = 2.dp.toPx()
+        // Inset so the brackets sit inside the frame the preview shows, and
+        // an arm long enough to read as a corner rather than a stray tick.
+        val inset = size.minDimension * 0.08f
+        val arm = size.minDimension * 0.10f
+
+        val left = inset
+        val right = size.width - inset
+        val top = size.height * 0.16f
+        val bottom = size.height * 0.84f
+
+        fun corner(x: Float, y: Float, dx: Float, dy: Float) {
+            drawLine(colour, Offset(x, y), Offset(x + dx, y), stroke)
+            drawLine(colour, Offset(x, y), Offset(x, y + dy), stroke)
+        }
+
+        corner(left, top, arm, arm)
+        corner(right, top, -arm, arm)
+        corner(left, bottom, arm, -arm)
+        corner(right, bottom, -arm, -arm)
+    }
+}

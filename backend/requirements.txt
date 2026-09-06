@@ -6,32 +6,15 @@ python-multipart==0.0.20
 pillow==12.3.0
 
 # --- persistence / sync backend ---
-sqlalchemy
-alembic
-psycopg[binary]
-python-jose
-passlib
-bcrypt
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+psycopg2-binary>=2.9.9
+psycopg[binary]>=3.1.0
+passlib>=1.7.4
+bcrypt>=4.0.0
+PyYAML>=6.0.1
+pytest>=8.0.0
+httpx>=0.27.0
 
-# --- server-side OCR (re-introduced) ---
-# PaddleOCR 3.x (its API changed significantly from 2.x -- see
-# app/services/ocr_service.py's module docstring for exactly what and
-# why). Unlike the 2.x line, PaddleOCR 3.x's dependency tree resolves
-# cleanly against numpy 2.x, so there is no numpy<2 pin here -- if you
-# see one reappear (e.g. from a stale lockfile), that's a sign something
-# pulled in paddleocr 2.x instead of 3.x, and app/services/ocr_service.py
-# will fail with `PaddleOCR.predict() got an unexpected keyword argument
-# 'cls'` the moment a scan is submitted.
-paddlepaddle>=3.0.0
-paddleocr>=3.0.0,<4.0.0
-
-# scipy.optimize.linear_sum_assignment (Hungarian assignment) is a direct
-# dependency of app/services/registry_matcher.py and
-# app/services/spatial_graph_extractor.py -- listed explicitly, not left
-# to arrive transitively via paddleocr, so SKU matching keeps working
-# even if the OCR stack above is ever made optional.
-scipy>=1.13
-
-# Domain logic (rules loading, shared models) -- installed editable from
-# the sibling labelguard/ package during development.
+# Domain logic (rules loading, shared models)
 -e ../labelguard

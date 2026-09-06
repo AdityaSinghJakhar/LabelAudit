@@ -1,545 +1,294 @@
-"""
-POST /api/scans -- server-side OCR path.
+from __future__ import annotations
 
-Distinct from the phone's own sync of on-device scans.
+import uuid
+from typing import List, Optional
 
-This endpoint:
-    image
-      -> OCR
-      -> spatial extraction
-      -> SKU registry matching
-      -> rule evaluation
-      -> Scan + ScanChecks + MatchesRegistry
-"""
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
+from sqlalchemy import or_
+from sqlalchemy.orm import Session, joinedload
 
-import asyncio
-from datetime import datetime, timezone
-from uuid import uuid4
-
-from fastapi import (
-    APIRouter,
-    Depends,
-    File,
-    Form,
-    HTTPException,
-    UploadFile,
-    status,
-)
-
-from app.config import settings
-from app.models.scan import (
-    RegistryMatchOut,
-    ScanCheckOut,
-    ScanDetailOut,
-    ScanResult,
-    ScanSummaryOut,
-)
-from app.services import (
-    ocr_service,
-    rules_service,
-    storage_service,
-)
-from app.services.registry_matcher import save_match_registry
-from app.services.scan_pipeline import extract_and_match
-
+from app.core.security import Role, get_current_device, get_optional_device
 from db import models
-from db.sharding import router as shard_router
+from db.session import get_db
+from labelguard.rules.loader import load_ruleset
+
+router = APIRouter(prefix="/v1/scans", tags=["scans"])
+
+# Load canonical ruleset once at startup to validate ruleset_version and citations
+try:
+    _CANONICAL_RULESET = load_ruleset()
+    KNOWN_RULESET_VERSIONS = {_CANONICAL_RULESET.version}
+    RULE_CITATIONS = {rule.id: rule.citation for rule in _CANONICAL_RULESET.rules}
+except Exception:
+    KNOWN_RULESET_VERSIONS = {"2026.1.0"}
+    RULE_CITATIONS = {}
+
+VALID_VERDICTS = {"PASS", "FAIL", "NEEDS_REVIEW", "NOT_ASSESSABLE"}
+VALID_CHECK_STATUSES = {
+    "PASS",
+    "FAIL",
+    "NEEDS_REVIEW",
+    "NOT_ASSESSABLE",
+    "NOT_APPLICABLE",
+    "EXEMPT",
+}
 
 
-router = APIRouter(tags=["scan"])
+class CheckIn(BaseModel):
+    rule_id: str
+    rule_name: str = ""
+    field: str
+    status: str
+    message: str = ""
+    observed_value: Optional[str] = None
+    citation: Optional[str] = None
 
 
-# ---------------------------------------------------------------------------
-# Shard session
-# ---------------------------------------------------------------------------
+class CheckOut(BaseModel):
+    rule_id: str
+    rule_name: str
+    field: str
+    status: str
+    citation: str
+    message: str
+    observed_value: Optional[str] = None
 
-def _shard_session(device_id: str = Form(...)):
+
+class ScanSyncIn(BaseModel):
+    id: Optional[str] = None
+    scanned_at: int = Field(default=0, description="Epoch milliseconds timestamp")
+    verdict: str
+    ruleset_version: str
+    sku_id: Optional[str] = None
+    brand: Optional[str] = None
+    mrp: Optional[str] = None
+    net_quantity: Optional[str] = None
+    batch_number: Optional[str] = None
+    mfg_date: Optional[str] = None
+    frames_used: int = 0
+    raw_lines: List[str] = Field(default_factory=list)
+    checks: List[CheckIn] = Field(default_factory=list)
+
+
+class ScanDetailOut(BaseModel):
+    id: str
+    device_id: Optional[str] = None
+    scanned_at: int
+    verdict: str
+    ruleset_version: str
+    sku_id: Optional[str] = None
+    brand: Optional[str] = None
+    mrp: Optional[str] = None
+    net_quantity: Optional[str] = None
+    batch_number: Optional[str] = None
+    mfg_date: Optional[str] = None
+    frames_used: int
+    raw_lines: List[str]
+    checks: List[CheckOut]
+
+
+class ScanPageOut(BaseModel):
+    items: List[ScanDetailOut]
+    total: int
+    page: int
+    limit: int
+    pages: int
+
+
+@router.post("", response_model=ScanDetailOut, status_code=status.HTTP_201_CREATED)
+def sync_scan(
+    payload: ScanSyncIn,
+    device: Optional[models.Device] = Depends(get_optional_device),
+    db: Session = Depends(get_db),
+):
     """
-    Read device_id from the multipart request and obtain the database
-    session for the shard associated with that device.
+    Accepts the ScanRecord.toJson() shape from Android client verbatim.
+    Validates ruleset_version against canonical ruleset.
+    Idempotent on scan ID.
     """
+    # 1. Validate ruleset_version
+    if payload.ruleset_version not in KNOWN_RULESET_VERSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Unknown ruleset_version '{payload.ruleset_version}'. "
+                f"Supported versions: {', '.join(KNOWN_RULESET_VERSIONS)}"
+            ),
+        )
 
-    session, shard_index = shard_router.session_for_key(device_id)
+    # 2. Validate verdict
+    verdict_upper = payload.verdict.upper()
+    if verdict_upper not in VALID_VERDICTS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid verdict '{payload.verdict}'. Must be one of {VALID_VERDICTS}",
+        )
 
-    try:
-        yield session, shard_index, device_id
-    finally:
-        session.close()
+    scan_id = payload.id or str(uuid.uuid4())
 
-
-# ---------------------------------------------------------------------------
-# Device
-# ---------------------------------------------------------------------------
-
-def _get_or_create_device(db, device_id: str) -> models.Device:
-    """
-    Get the device associated with device_id.
-
-    Create it if this is the first scan received from the device.
-    """
-
-    device = (
-        db.query(models.Device)
-        .filter_by(device_id=device_id)
+    # Idempotency check
+    existing = (
+        db.query(models.Scan)
+        .options(joinedload(models.Scan.checks))
+        .filter(models.Scan.id == scan_id)
         .one_or_none()
     )
+    if existing:
+        return _format_scan(existing)
 
-    if device is None:
-        device = models.Device(
-            device_id=device_id,
-            role="CONSUMER",
-        )
-
-        db.add(device)
-
-        # Populate device.id before Scan is created because Scan.device_id
-        # is a foreign key to Device.id.
-        db.flush()
-
-    return device
-
-
-# ---------------------------------------------------------------------------
-# Scan endpoint
-# ---------------------------------------------------------------------------
-
-@router.post(
-    "/scans",
-    response_model=ScanResult,
-    status_code=status.HTTP_201_CREATED,
-)
-async def submit_scan(
-    image: UploadFile = File(...),
-    shard=Depends(_shard_session),
-) -> ScanResult:
-
-    # The dependency gives us:
-    #
-    #   db          -> synchronous SQLAlchemy session
-    #   shard_index -> selected database shard
-    #   device_id   -> device identifier from request
-    #
-    db, shard_index, device_id = shard
-
-    # -----------------------------------------------------------------------
-    # Validate upload
-    # -----------------------------------------------------------------------
-
-    if image.content_type not in settings.allowed_content_types:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=(
-                f"Unsupported image type '{image.content_type}'. "
-                f"Expected one of: "
-                f"{', '.join(settings.allowed_content_types)}"
-            ),
-        )
-
-    data = await image.read()
-
-    if not data:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded image is empty.",
-        )
-
-    if len(data) > settings.max_upload_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                f"Image is {len(data)} bytes, over the "
-                f"{settings.max_upload_bytes} byte limit."
-            ),
-        )
-
-    # -----------------------------------------------------------------------
-    # Store image
-    # -----------------------------------------------------------------------
-
-    scan_id = uuid4()
-
-    image_key = storage_service.build_key(
-        scan_id,
-        image.content_type,
+    scan = models.Scan(
+        id=scan_id,
+        device_id=device.id if device else None,
+        scanned_at=payload.scanned_at,
+        verdict=verdict_upper,
+        ruleset_version=payload.ruleset_version,
+        sku_id=payload.sku_id,
+        brand=payload.brand,
+        mrp=payload.mrp,
+        net_quantity=payload.net_quantity,
+        batch_number=payload.batch_number,
+        mfg_date=payload.mfg_date,
+        frames_used=payload.frames_used,
+        raw_lines=payload.raw_lines,
     )
-
-    storage_service.save_image(
-        image_key,
-        data,
-    )
-
-    # -----------------------------------------------------------------------
-    # 1. OCR
-    # -----------------------------------------------------------------------
-
-    # OCR is CPU-bound/blocking, so run it outside the event loop.
-    ocr_result = await asyncio.to_thread(
-        ocr_service.extract_text,
-        data,
-    )
-
-    # -----------------------------------------------------------------------
-    # 2. Spatial extraction + SKU registry matching
-    # -----------------------------------------------------------------------
-
-    # Synchronous: db is a plain sqlalchemy.orm.Session from the shard
-    # router, and the spatial/registry-matching pipeline is written
-    # against that, not asyncio. See registry_matcher.py's module
-    # docstring for why.
-    identity_result = extract_and_match(
-        db=db,
-        ocr_result=ocr_result,
-    )
-
-    spatial_identity = identity_result.spatial.identity
-    registry = identity_result.registry
-
-    # -----------------------------------------------------------------------
-    # 3. Rule evaluation
-    # -----------------------------------------------------------------------
-
-    # `registry` (the MatchDecision from step 2) feeds matches_registry
-    # checks -- see rules_service._evaluate_matches_registry.
-    evaluation = await asyncio.to_thread(
-        rules_service.evaluate,
-        ocr_result,
-        registry,
-    )
-
-    # -----------------------------------------------------------------------
-    # 4. Device
-    # -----------------------------------------------------------------------
-
-    device = _get_or_create_device(
-        db,
-        device_id,
-    )
-
-    # -----------------------------------------------------------------------
-    # 5. Create Scan
-    # -----------------------------------------------------------------------
-
-    scan_row = models.Scan(
-        id=str(scan_id),
-        device_id=device.id,
-        source="server_ocr",
-        scanned_at=datetime.now(timezone.utc),
-
-        verdict=evaluation.verdict.value,
-        ruleset_version=evaluation.ruleset_version,
-
-        # Prefer the spatially extracted identity where available.
-        brand=spatial_identity.get("brand"),
-
-        # Keep rule extraction as the fallback for fields not found by
-        # spatial extraction.
-        mrp=(
-            spatial_identity.get("mrp")
-            or _field_value(evaluation, "mrp")
-        ),
-
-        net_quantity=(
-            spatial_identity.get("net_quantity")
-            or _field_value(evaluation, "net_quantity")
-        ),
-
-        batch_number=_field_value(
-            evaluation,
-            "batch_number",
-        ),
-
-        mfg_date=_field_value(
-            evaluation,
-            "mfg_date",
-        ),
-
-        frames_used=1,
-
-        raw_lines=[
-            token.text
-            for token in ocr_result.tokens
-        ],
-
-        image_key=image_key,
-
-        ocr_model=ocr_result.model,
-        ocr_mean_confidence=ocr_result.mean_confidence,
-        ocr_processing_time_ms=ocr_result.processing_time_ms,
-
-        shard_index=shard_index,
-    )
-
-    db.add(scan_row)
-
-    # Populate scan_row.id before creating MatchesRegistry.
+    db.add(scan)
     db.flush()
 
-    # -----------------------------------------------------------------------
-    # 6. Persist registry matching decision
-    # -----------------------------------------------------------------------
+    for c in payload.checks:
+        status_upper = c.status.upper()
+        if status_upper not in VALID_CHECK_STATUSES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid check status '{c.status}' for rule '{c.rule_id}'",
+            )
+        # Populate statutory citation if missing
+        citation = c.citation or RULE_CITATIONS.get(c.rule_id, "Statutory requirement")
 
-    # scan_row.id only exists after the flush above, which is why this
-    # step -- unlike spatial extraction and matching themselves -- happens
-    # here rather than inside extract_and_match().
-    save_match_registry(
-        db=db,
-        scan_id=scan_row.id,
-        decision=registry,
-    )
+        scan_check = models.ScanCheck(
+            scan_id=scan.id,
+            rule_id=c.rule_id,
+            rule_name=c.rule_name,
+            field=c.field,
+            status=status_upper,
+            citation=citation,
+            message=c.message,
+            observed_value=c.observed_value,
+        )
+        db.add(scan_check)
 
-    # -----------------------------------------------------------------------
-    # 7. Persist rule checks
-    # -----------------------------------------------------------------------
+    db.commit()
+    db.refresh(scan)
+    return _format_scan(scan)
 
-    for check in evaluation.checks:
-        db.add(
-            models.ScanCheck(
-                scan_id=scan_row.id,
-                rule_id=check.rule_id,
-                rule_name=check.rule_name,
-                field=check.field,
-                status=check.status.value,
-                citation=check.citation,
-                message=check.message,
-                observed_value=check.observed_value,
+
+@router.get("", response_model=ScanPageOut)
+def list_scans(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    device_id: Optional[str] = None,
+    verdict: Optional[str] = None,
+    q: Optional[str] = None,
+    device: Optional[models.Device] = Depends(get_optional_device),
+    db: Session = Depends(get_db),
+):
+    """
+    Paginated, filterable scans.
+    CONSUMER role only sees scans created by their own device.
+    INSPECTOR role can see fleet-wide scans or filter by device_id.
+    """
+    query = db.query(models.Scan).options(joinedload(models.Scan.checks))
+
+    # Role-based scoping
+    if device and device.role == Role.CONSUMER.value:
+        query = query.filter(models.Scan.device_id == device.id)
+    elif device_id:
+        # Inspector or explicit filter
+        matching_dev = db.query(models.Device).filter(models.Device.device_id == device_id).one_or_none()
+        if matching_dev:
+            query = query.filter(models.Scan.device_id == matching_dev.id)
+        else:
+            query = query.filter(models.Scan.device_id == device_id)
+
+    if verdict:
+        query = query.filter(models.Scan.verdict == verdict.upper())
+
+    if q and q.strip():
+        term = f"%{q.strip().lower()}%"
+        # Search over sku_id, brand, mrp, net_quantity, batch_number, mfg_date, verdict
+        query = query.filter(
+            or_(
+                models.Scan.sku_id.ilike(term),
+                models.Scan.brand.ilike(term),
+                models.Scan.mrp.ilike(term),
+                models.Scan.net_quantity.ilike(term),
+                models.Scan.batch_number.ilike(term),
+                models.Scan.mfg_date.ilike(term),
+                models.Scan.verdict.ilike(term),
             )
         )
 
-    # -----------------------------------------------------------------------
-    # 8. Commit everything together
-    # -----------------------------------------------------------------------
+    total = query.count()
+    offset = (page - 1) * limit
+    scans = query.order_by(models.Scan.scanned_at.desc()).offset(offset).limit(limit).all()
+    pages = (total + limit - 1) // limit if total > 0 else 1
 
-    db.commit()
+    return ScanPageOut(
+        items=[_format_scan(s) for s in scans],
+        total=total,
+        page=page,
+        limit=limit,
+        pages=pages,
+    )
 
-    # -----------------------------------------------------------------------
-    # 9. Response
-    # -----------------------------------------------------------------------
 
-    return ScanResult(
-        scan_id=scan_id,
-        device_id=device_id,
-        shard_index=shard_index,
+@router.get("/{scan_id}", response_model=ScanDetailOut)
+def get_scan(
+    scan_id: str,
+    device: Optional[models.Device] = Depends(get_optional_device),
+    db: Session = Depends(get_db),
+):
+    scan = (
+        db.query(models.Scan)
+        .options(joinedload(models.Scan.checks))
+        .filter(models.Scan.id == scan_id)
+        .one_or_none()
+    )
+    if not scan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found")
 
-        verdict=evaluation.verdict.value,
-        ruleset_version=evaluation.ruleset_version,
+    # If consumer, ensure it belongs to them
+    if device and device.role == Role.CONSUMER.value and scan.device_id != device.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-        extracted_fields={
-            name: field.value
-            for name, field in evaluation.extracted_fields.items()
-        },
+    return _format_scan(scan)
 
+
+def _format_scan(scan: models.Scan) -> ScanDetailOut:
+    return ScanDetailOut(
+        id=scan.id,
+        device_id=scan.device_id,
+        scanned_at=scan.scanned_at,
+        verdict=scan.verdict,
+        ruleset_version=scan.ruleset_version,
+        sku_id=scan.sku_id,
+        brand=scan.brand,
+        mrp=scan.mrp,
+        net_quantity=scan.net_quantity,
+        batch_number=scan.batch_number,
+        mfg_date=scan.mfg_date,
+        frames_used=scan.frames_used,
+        raw_lines=scan.raw_lines or [],
         checks=[
-            ScanCheckOut(
+            CheckOut(
                 rule_id=c.rule_id,
                 rule_name=c.rule_name,
                 field=c.field,
-                status=c.status.value,
+                status=c.status,
                 citation=c.citation,
                 message=c.message,
                 observed_value=c.observed_value,
             )
-            for c in evaluation.checks
+            for c in scan.checks
         ],
-
-        image_key=image_key,
-        size_bytes=len(data),
-        received_at=datetime.now(timezone.utc),
-
-        ocr=ocr_result,
     )
-
-
-# ---------------------------------------------------------------------------
-# Read endpoints
-# ---------------------------------------------------------------------------
-#
-# A scan's shard is determined by its owning DEVICE's device_id (see
-# db/sharding.py's module docstring: device_id is the shard key, not
-# scan_id). A caller retrieving one scan by id, or listing a device's
-# scans, therefore always supplies device_id -- that is what lets these
-# endpoints go straight to the correct shard instead of fanning out
-# across every shard to find one row. This mirrors the write path's own
-# _shard_session dependency.
-
-@router.get(
-    "/scans",
-    response_model=list[ScanSummaryOut],
-)
-def list_scans(
-    device_id: str,
-    limit: int = 50,
-) -> list[ScanSummaryOut]:
-    """
-    A device's scan history, most recent first. Mirrors the on-device
-    history list (HANDOFF.md: "every scan recorded and searchable").
-    """
-
-    if not 1 <= limit <= 200:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="limit must be between 1 and 200.",
-        )
-
-    db, _shard_index = shard_router.session_for_key(device_id)
-
-    try:
-        device = db.query(models.Device).filter_by(device_id=device_id).one_or_none()
-
-        if device is None:
-            return []
-
-        rows = (
-            db.query(models.Scan)
-            .filter_by(device_id=device.id)
-            .order_by(models.Scan.scanned_at.desc())
-            .limit(limit)
-            .all()
-        )
-
-        return [
-            ScanSummaryOut(
-                scan_id=row.id,
-                device_id=device_id,
-                source=row.source,
-                scanned_at=row.scanned_at,
-                verdict=row.verdict,
-                ruleset_version=row.ruleset_version,
-                brand=row.brand,
-                mrp=row.mrp,
-                net_quantity=row.net_quantity,
-                title=row.title,
-            )
-            for row in rows
-        ]
-    finally:
-        db.close()
-
-
-@router.get(
-    "/scans/{scan_id}",
-    response_model=ScanDetailOut,
-)
-def get_scan(
-    scan_id: str,
-    device_id: str,
-) -> ScanDetailOut:
-    """
-    One scan's full stored detail: the Scan row, every ScanCheck, and its
-    MatchesRegistry decision if one was recorded (server_ocr scans always
-    have one; synced on-device scans never do, since matching only runs
-    server-side today).
-
-    device_id is required, not optional, because it is what selects the
-    shard scan_id might live on -- without it this endpoint would have to
-    query every shard to find one row. A client always has the device_id
-    it scanned with, so this is not an extra burden in practice, only an
-    explicit one.
-    """
-
-    db, _shard_index = shard_router.session_for_key(device_id)
-
-    try:
-        row = (
-            db.query(models.Scan)
-            .join(models.Device, models.Scan.device_id == models.Device.id)
-            .filter(
-                models.Scan.id == scan_id,
-                models.Device.device_id == device_id,
-            )
-            .one_or_none()
-        )
-
-        if row is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=(
-                    f"No scan '{scan_id}' found for device '{device_id}'. "
-                    "Either the id is wrong, or this device_id does not "
-                    "own that scan. Landing on the right shard is not "
-                    "enough -- two different device_ids can hash to the "
-                    "same shard, so ownership is checked explicitly, "
-                    "not inferred from co-location."
-                ),
-            )
-
-        checks = (
-            db.query(models.ScanCheck)
-            .filter_by(scan_id=scan_id)
-            .all()
-        )
-
-        match = (
-            db.query(models.MatchesRegistry)
-            .filter_by(scan_id=scan_id)
-            .order_by(models.MatchesRegistry.created_at.desc())
-            .first()
-        )
-
-        return ScanDetailOut(
-            scan_id=row.id,
-            device_id=device_id,
-            source=row.source,
-            scanned_at=row.scanned_at,
-            synced_at=row.synced_at,
-            verdict=row.verdict,
-            ruleset_version=row.ruleset_version,
-            brand=row.brand,
-            mrp=row.mrp,
-            net_quantity=row.net_quantity,
-            batch_number=row.batch_number,
-            mfg_date=row.mfg_date,
-            frames_used=row.frames_used,
-            raw_lines=row.raw_lines,
-            image_key=row.image_key,
-            ocr_model=row.ocr_model,
-            ocr_mean_confidence=row.ocr_mean_confidence,
-            ocr_processing_time_ms=row.ocr_processing_time_ms,
-            checks=[
-                ScanCheckOut(
-                    rule_id=c.rule_id,
-                    rule_name=c.rule_name,
-                    field=c.field,
-                    status=c.status,
-                    citation=c.citation,
-                    message=c.message,
-                    observed_value=c.observed_value,
-                )
-                for c in checks
-            ],
-            registry_match=(
-                RegistryMatchOut(
-                    status=match.status,
-                    score=match.score,
-                    rejection_threshold=match.rejection_threshold,
-                    match_method=match.match_method,
-                    sku_id=match.sku_id,
-                    evidence=(
-                        match.evidence
-                        if isinstance(match.evidence, dict)
-                        else {"items": match.evidence}
-                    ),
-                    extracted_identity=match.extracted_identity,
-                )
-                if match is not None
-                else None
-            ),
-        )
-    finally:
-        db.close()
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _field_value(
-    evaluation,
-    name: str,
-) -> str | None:
-    """
-    Safely retrieve a field from the rule evaluation.
-    """
-
-    field = evaluation.extracted_fields.get(name)
-
-    return field.value if field else None

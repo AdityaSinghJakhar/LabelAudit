@@ -1,128 +1,145 @@
-"""
-SKU registry management -- CRUD over db.models.Sku.
+import time
+from typing import List, Optional
 
-This is the "registered reference products" table that
-app/services/registry_matcher.py compares scans against (see that
-module's and db/models.py's docstrings on AUTHORITATIVE vs ASSERTED). It
-has no shard key of its own -- unlike Device/Scan/ScanCheck, a Sku is not
-scoped to one device, so it is not sharded by device_id. It lives on shard
-0 (the first configured shard), which db/sharding.py's ShardRouter always
-constructs regardless of shard count. A deployment that never configures
-DATABASE_SHARD_URLS (single-shard mode, e.g. local dev or a small SIH
-prototype) is unaffected: shard 0 is the only shard there is.
-
-Known limitation, stated rather than hidden per HANDOFF.md's own
-convention: in a genuinely multi-shard deployment, every registry lookup
-and write goes to shard 0 specifically. That is fine for a single-SKU or
-small-catalog prototype (this endpoint exists to manage exactly that) but
-would need the registry moved to a small shared/coordinator database, not
-a per-device shard, before it could scale independently of shard 0's own
-load.
-"""
-
-from __future__ import annotations
-
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.models.sku import SkuCreate, SkuOut, SkuUpdate
+from app.core.security import Role, get_optional_device, require_role
 from db import models
-from db.sharding import router as shard_router
+from db.session import get_db
 
-router = APIRouter(tags=["registry"])
+router = APIRouter(prefix="/v1/skus", tags=["skus"])
 
 
-def _registry_session():
+class SkuCreateIn(BaseModel):
+    sku_id: str = Field(..., description="Unique product SKU ID, e.g. GOKUL-NAMKEEN-500G")
+    brand_strings: List[str] = Field(default_factory=list)
+    mrp_exact: Optional[float] = None
+    net_quantity: Optional[str] = None
+    manufacturer_address: Optional[str] = None
+    consumer_care: Optional[str] = None
+    fssai_licence: Optional[str] = None
+    source: str = Field(default="ENROLLED_FROM_SCAN", description="ENROLLED_FROM_SCAN | IMPORTED | MANUAL")
+    note: str = ""
+    saved_at: Optional[int] = None
+
+
+class SkuOut(BaseModel):
+    sku_id: str
+    authority: str
+    source: str
+    brand_strings: List[str]
+    mrp_exact: Optional[float] = None
+    net_quantity: Optional[str] = None
+    manufacturer_address: Optional[str] = None
+    consumer_care: Optional[str] = None
+    fssai_licence: Optional[str] = None
+    note: str
+    saved_at: int
+
+
+def _resolve_authority(source: str) -> str:
     """
-    The registry lives on shard 0 -- see this module's docstring. Using
-    session_for_key with a fixed key (rather than
-    session_factories[0]() directly) keeps this call going through the
-    same ShardRouter surface every other session in the app uses, so a
-    future change to how shard 0 specifically is selected only has to
-    happen in one place.
+    Preserves AUTHORITATIVE vs ASSERTED.
+    Only IMPORTED (official brand/regulator master) carries AUTHORITATIVE authority.
+    Scanned or manual enrolments are ASSERTED, so an enrolled reference can never
+    substantiate a FAIL on another pack.
     """
-    session, _shard_index = shard_router.session_for_key("__registry__")
-    try:
-        yield session
-    finally:
-        session.close()
+    src = source.upper()
+    if src == "IMPORTED":
+        return "AUTHORITATIVE"
+    return "ASSERTED"
 
 
-def _get_or_404(db: Session, sku_id: str) -> models.Sku:
-    sku = db.query(models.Sku).filter_by(sku_id=sku_id).one_or_none()
-    if sku is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No SKU registered with sku_id '{sku_id}'.",
+@router.post("", response_model=SkuOut, status_code=status.HTTP_201_CREATED)
+def enrol_sku(
+    payload: SkuCreateIn,
+    device: models.Device = Depends(require_role(Role.INSPECTOR)),
+    db: Session = Depends(get_db),
+):
+    """
+    Inspector-only reference enrolment.
+    Mirrors Enrolment.fromScan on Kotlin side.
+    """
+    source_upper = payload.source.upper()
+    if source_upper not in {"ENROLLED_FROM_SCAN", "IMPORTED", "MANUAL"}:
+        source_upper = "ENROLLED_FROM_SCAN"
+
+    authority = _resolve_authority(source_upper)
+    saved_at = payload.saved_at or int(time.time() * 1000)
+
+    sku = db.query(models.Sku).filter(models.Sku.sku_id == payload.sku_id).one_or_none()
+    if not sku:
+        sku = models.Sku(
+            sku_id=payload.sku_id,
+            authority=authority,
+            source=source_upper,
+            brand_strings=payload.brand_strings,
+            mrp_exact=payload.mrp_exact,
+            net_quantity=payload.net_quantity,
+            manufacturer_address=payload.manufacturer_address,
+            consumer_care=payload.consumer_care,
+            fssai_licence=payload.fssai_licence,
+            note=payload.note,
+            enrolled_by_device_id=device.id,
+            saved_at=saved_at,
         )
-    return sku
+        db.add(sku)
+    else:
+        sku.authority = authority
+        sku.source = source_upper
+        sku.brand_strings = payload.brand_strings
+        sku.mrp_exact = payload.mrp_exact
+        sku.net_quantity = payload.net_quantity
+        sku.manufacturer_address = payload.manufacturer_address
+        sku.consumer_care = payload.consumer_care
+        sku.fssai_licence = payload.fssai_licence
+        sku.note = payload.note
+        sku.enrolled_by_device_id = device.id
+        sku.saved_at = saved_at
 
-
-@router.post(
-    "/skus",
-    response_model=SkuOut,
-    status_code=status.HTTP_201_CREATED,
-)
-def create_sku(
-    payload: SkuCreate,
-    db: Session = Depends(_registry_session),
-) -> models.Sku:
-    existing = db.query(models.Sku).filter_by(sku_id=payload.sku_id).one_or_none()
-    if existing is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"A SKU with sku_id '{payload.sku_id}' is already registered.",
-        )
-
-    sku = models.Sku(
-        sku_id=payload.sku_id,
-        authority=payload.authority,
-        brand_strings=payload.brand_strings,
-        mrp_exact=payload.mrp_exact,
-        net_quantity=payload.net_quantity,
-        note=payload.note,
-        enrolled_by_device_id=payload.enrolled_by_device_id,
-    )
-    db.add(sku)
     db.commit()
     db.refresh(sku)
-    return sku
+    return _format_sku(sku)
 
 
-@router.get("/skus", response_model=list[SkuOut])
-def list_skus(db: Session = Depends(_registry_session)) -> list[models.Sku]:
-    return db.query(models.Sku).order_by(models.Sku.created_at.desc()).all()
+@router.get("", response_model=List[SkuOut])
+def list_skus(
+    db: Session = Depends(get_db),
+    device: Optional[models.Device] = Depends(get_optional_device),
+):
+    """
+    Pulled by every device on app start/refresh.
+    Open to Shoppers and Inspectors.
+    """
+    skus = db.query(models.Sku).order_by(models.Sku.sku_id.asc()).all()
+    return [_format_sku(s) for s in skus]
 
 
-@router.get("/skus/{sku_id}", response_model=SkuOut)
-def get_sku(sku_id: str, db: Session = Depends(_registry_session)) -> models.Sku:
-    return _get_or_404(db, sku_id)
-
-
-@router.patch("/skus/{sku_id}", response_model=SkuOut)
-def update_sku(
+@router.get("/{sku_id}", response_model=SkuOut)
+def get_sku(
     sku_id: str,
-    payload: SkuUpdate,
-    db: Session = Depends(_registry_session),
-) -> models.Sku:
-    sku = _get_or_404(db, sku_id)
-
-    updates = payload.model_dump(exclude_unset=True)
-    for field, value in updates.items():
-        setattr(sku, field, value)
-
-    db.commit()
-    db.refresh(sku)
-    return sku
+    db: Session = Depends(get_db),
+    device: Optional[models.Device] = Depends(get_optional_device),
+):
+    sku = db.query(models.Sku).filter(models.Sku.sku_id == sku_id).one_or_none()
+    if not sku:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SKU not found")
+    return _format_sku(sku)
 
 
-@router.delete(
-    "/skus/{sku_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_model=None,
-)
-def delete_sku(sku_id: str, db: Session = Depends(_registry_session)) -> Response:
-    sku = _get_or_404(db, sku_id)
-    db.delete(sku)
-    db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+def _format_sku(sku: models.Sku) -> SkuOut:
+    return SkuOut(
+        sku_id=sku.sku_id,
+        authority=sku.authority,
+        source=sku.source,
+        brand_strings=sku.brand_strings or [],
+        mrp_exact=sku.mrp_exact,
+        net_quantity=sku.net_quantity,
+        manufacturer_address=sku.manufacturer_address,
+        consumer_care=sku.consumer_care,
+        fssai_licence=sku.fssai_licence,
+        note=sku.note or "",
+        saved_at=sku.saved_at,
+    )

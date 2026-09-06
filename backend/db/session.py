@@ -1,24 +1,34 @@
-"""
-Holds only the shared declarative Base now.
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-Before sharding, this module also built the single global engine/session
-every request used. That's gone -- db/sharding.py's ShardRouter builds one
-engine per configured shard instead, and every request path goes through
-it (see app/api/scan.py's `_shard_session` dependency). Keeping a second,
-unused engine here pointed at settings.database_url was worse than
-useless: it was built eagerly at import time, so it forced whichever DB
-driver settings.database_url implied (psycopg2, by default) to be
-importable even in a deployment that only ever talks to the configured
-shards -- a real footgun for anyone running a lighter dev setup (e.g.
-sqlite shards for a quick local smoke test) without also installing a
-driver for a database nothing actually connects to.
-
-Base stays here (not moved into sharding.py) because alembic/env.py and
-db/models.py both import it, and neither needs to know sharding exists.
-"""
-
-from sqlalchemy.orm import DeclarativeBase
+from app.config import settings
 
 
 class Base(DeclarativeBase):
     """Shared declarative base for every ORM model in db/models.py."""
+    pass
+
+
+def get_db_url() -> str:
+    # Prioritize DATABASE_URL, fallback to sqlite for local testing/offline run
+    return os.environ.get("DATABASE_URL", settings.database_url)
+
+
+def create_db_engine(url: str | None = None):
+    db_url = url or get_db_url()
+    connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
+    return create_engine(db_url, connect_args=connect_args)
+
+
+engine = create_db_engine()
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def get_db():
+    """FastAPI dependency that yields a database session."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

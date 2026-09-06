@@ -1,20 +1,27 @@
-import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import health, registry, scan
+from app.api import (
+    calibrations,
+    conflicts,
+    corpus,
+    devices,
+    health,
+    registry,
+    reports,
+    scan,
+)
 from app.config import settings
-from app.services import ocr_service
+from db.models import Base
+from db.session import engine
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load OCR models in the background so startup is not blocked but the
-    # first scan does not pay the initialisation cost either.
-    warm_up = asyncio.create_task(asyncio.to_thread(ocr_service.warm_up))
+    # Ensure database tables exist on startup
+    Base.metadata.create_all(bind=engine)
     yield
-    warm_up.cancel()
 
 
 app = FastAPI(
@@ -23,11 +30,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Mount sync backend routers
 app.include_router(health.router, prefix="/api")
+app.include_router(devices.router, prefix="/api")
 app.include_router(scan.router, prefix="/api")
+app.include_router(conflicts.router, prefix="/api")
 app.include_router(registry.router, prefix="/api")
+app.include_router(calibrations.router, prefix="/api")
+app.include_router(reports.router, prefix="/api")
+app.include_router(corpus.router, prefix="/api")
 
 
 @app.get("/")
 def root():
-    return {"service": settings.app_name, "version": settings.app_version}
+    return {
+        "service": settings.app_name,
+        "version": settings.app_version,
+        "mode": "sync_backend",
+    }

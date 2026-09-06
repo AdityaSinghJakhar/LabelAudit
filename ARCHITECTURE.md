@@ -247,6 +247,31 @@ comparisons inapplicable; it must never stop the scanner from running.
 
 ---
 
+## Interface
+
+The design system is [DESIGN.md](DESIGN.md), implemented in `ui/theme/`
+(`Color.kt`, `Type.kt`, `Theme.kt`) and `ui/components/Chrome.kt`. Plus Jakarta
+Sans for headings, Inter for body and every number, both bundled in `res/font/`
+because the app is offline by design.
+
+Three decisions in it are not cosmetic:
+
+- **No dynamic colour, and no dark scheme.** Material You would let the
+  device's wallpaper repaint a compliance verdict — the one thing on screen
+  whose colour carries meaning. The scheme is light because the app is read
+  outdoors in daylight, and a dark variant would have to re-derive every
+  status tint to stay legible.
+- **`NOT_ASSESSABLE` is slate, not amber.** It shares a palette with
+  `NOT_APPLICABLE` and `EXEMPT`, never with `NEEDS_REVIEW`. Colouring "we
+  could not read this" as a weaker kind of violation is exactly the confusion
+  the pipeline is built to prevent, and `paletteFor()` in `Chrome.kt` is where
+  that is enforced for the whole app.
+- **Depth is borders, not shadows.** A diffuse drop shadow disappears in
+  direct sunlight; a 1px stroke does not. `AppCard` is the only card surface.
+
+Status is never carried by colour alone — every badge prints the word too,
+which is also what makes the screens readable to a colour-blind inspector.
+
 ## Build and deployment
 
 - Kotlin, Jetpack Compose, Material 3

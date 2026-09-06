@@ -4,27 +4,31 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.labelguard.app.pipeline.Verdict
+import com.labelguard.app.ui.components.AppCard
+import com.labelguard.app.ui.components.SecondaryButton
+import com.labelguard.app.ui.components.StatusPill
+import com.labelguard.app.ui.components.paletteFor
+import com.labelguard.app.ui.components.readable
+import com.labelguard.app.ui.theme.AppColors
+import com.labelguard.app.ui.theme.MetricStyle
+import com.labelguard.app.ui.theme.StatusColors
+import com.labelguard.app.ui.theme.StatusPalette
 import com.labelguard.app.viewmodel.BulkItem
 import com.labelguard.app.viewmodel.BulkRun
 
@@ -49,41 +53,45 @@ fun BulkScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            .background(AppColors.Canvas),
+        contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
-            Card(Modifier.fillMaxWidth()) {
+            AppCard {
                 Column(Modifier.padding(16.dp)) {
                     Text(
                         text = "Bulk scan",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = AppColors.Ink
                     )
                     Text(
                         text = "${run.processed} of ${run.total} images",
                         style = MaterialTheme.typography.bodyMedium,
+                        color = AppColors.InkMuted,
                         modifier = Modifier.padding(top = 4.dp)
                     )
 
                     if (!run.isComplete) {
                         LinearProgressIndicator(
                             progress = { run.processed.toFloat() / run.total },
+                            color = AppColors.Navy,
+                            trackColor = AppColors.DividerSoft,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(top = 10.dp)
+                                .padding(top = 12.dp)
                         )
                     }
 
                     val summary = run.counts.entries
                         .sortedBy { severity(it.key) }
-                        .joinToString("   ") { "${it.value} ${label(it.key)}" }
+                        .joinToString("   ") { "${it.value} ${readable(it.key).lowercase()}" }
                     if (summary.isNotBlank()) {
                         Text(
                             text = summary,
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier.padding(top = 10.dp)
+                            style = MetricStyle,
+                            color = AppColors.Ink,
+                            modifier = Modifier.padding(top = 12.dp)
                         )
                     }
 
@@ -93,7 +101,7 @@ fun BulkScreen(
                         text = "Each image is treated as one product and read " +
                             "once, so values are not corroborated across frames.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = AppColors.InkMuted,
                         modifier = Modifier.padding(top = 10.dp)
                     )
                 }
@@ -106,16 +114,17 @@ fun BulkScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedButton(
+                    SecondaryButton(
+                        text = "Export results",
                         onClick = onExportResults,
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Export results")
-                    }
+                    )
                     onShareResults?.let {
-                        OutlinedButton(onClick = it, modifier = Modifier.weight(1f)) {
-                            Text("Share results")
-                        }
+                        SecondaryButton(
+                            text = "Share results",
+                            onClick = it,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                 }
             }
@@ -126,15 +135,17 @@ fun BulkScreen(
                 Text(
                     text = it,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
+                    color = AppColors.InkMuted
                 )
             }
         }
 
         item {
-            OutlinedButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
-                Text("Back to camera")
-            }
+            SecondaryButton(
+                text = "Back to camera",
+                onClick = onDone,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
 
         items(ordered) { item -> BulkRow(item, onOpen) }
@@ -143,51 +154,45 @@ fun BulkScreen(
 
 @Composable
 private fun BulkRow(item: BulkItem, onOpen: (BulkItem) -> Unit) {
-    val color = verdictColour(item.verdict)
+    val palette = paletteOf(item.verdict)
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = item.report != null) { onOpen(item) },
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    ) {
+    AppCard(borderColor = palette.border) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .clickable(enabled = item.report != null) { onOpen(item) }
+                .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(Modifier.padding(end = 12.dp)) {
+            Column(Modifier.weight(1f)) {
                 Text(
                     text = item.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1
+                    style = MaterialTheme.typography.titleMedium,
+                    color = AppColors.Ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = item.summary,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = AppColors.InkMuted
                 )
             }
 
-            Surface(color = color.copy(alpha = 0.14f), shape = RoundedCornerShape(50)) {
-                Text(
-                    text = item.verdict?.let { label(it) } ?: "error",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = color,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                )
-            }
+            StatusPill(
+                // A null verdict is an image that could not be read at all, not
+                // a pack that passed or failed. It says so.
+                text = item.verdict?.let { readable(it) } ?: "Could not read",
+                palette = palette,
+                modifier = Modifier.padding(start = 12.dp)
+            )
         }
     }
 }
 
-private fun label(verdict: Verdict) = verdict.name.replace('_', ' ').lowercase()
+private fun paletteOf(verdict: Verdict?): StatusPalette =
+    verdict?.let { paletteFor(it) } ?: StatusColors.Neutral
 
 /** Worst first. Errors sort alongside the unassessable. */
 private fun severity(verdict: Verdict?): Int = when (verdict) {
@@ -196,12 +201,4 @@ private fun severity(verdict: Verdict?): Int = when (verdict) {
     null -> 2
     Verdict.NOT_ASSESSABLE -> 3
     Verdict.PASS -> 4
-}
-
-private fun verdictColour(verdict: Verdict?): Color = when (verdict) {
-    Verdict.PASS -> Color(0xFF15803D)
-    Verdict.FAIL -> Color(0xFFB91C1C)
-    Verdict.NEEDS_REVIEW -> Color(0xFFB45309)
-    Verdict.NOT_ASSESSABLE -> Color(0xFF475569)
-    null -> Color(0xFF7F1D1D)
 }

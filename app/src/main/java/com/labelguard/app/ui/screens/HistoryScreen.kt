@@ -1,16 +1,20 @@
 package com.labelguard.app.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -21,12 +25,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.labelguard.app.history.HistoryStore
 import com.labelguard.app.history.ScanRecord
-import com.labelguard.app.pipeline.RuleStatus
-import com.labelguard.app.pipeline.Verdict
+import com.labelguard.app.ui.components.AppCard
+import com.labelguard.app.ui.components.SecondaryButton
+import com.labelguard.app.ui.components.SectionLabel
+import com.labelguard.app.ui.components.StatusPill
+import com.labelguard.app.ui.components.accentFor
+import com.labelguard.app.ui.components.paletteFor
+import com.labelguard.app.ui.components.readable
+import com.labelguard.app.ui.theme.AppColors
+import com.labelguard.app.ui.theme.MetricStyle
+import com.labelguard.app.ui.theme.StatusColors
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -56,41 +68,47 @@ fun HistoryScreen(
 ) {
     LazyColumn(
         modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .fillMaxSize()
+            .background(AppColors.Canvas),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Inspection history", style = MaterialTheme.typography.titleLarge)
-                TextButton(onClick = onBack) { Text("Close") }
+                Text(
+                    text = "Inspection history",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = AppColors.Ink
+                )
+                SecondaryButton(text = "Close", onClick = onBack)
             }
         }
 
         item { SummaryCard(summary) }
 
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                onExportCsv?.let {
-                    OutlinedButton(onClick = it) { Text("Export CSV") }
+        if (onExportCsv != null || onShareCsv != null || exportStatus != null) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        onExportCsv?.let {
+                            SecondaryButton(text = "Export CSV", onClick = it)
+                        }
+                        onShareCsv?.let {
+                            SecondaryButton(text = "Share", onClick = it)
+                        }
+                    }
+                    exportStatus?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AppColors.InkMuted
+                        )
+                    }
                 }
-                onShareCsv?.let { TextButton(onClick = it) { Text("Share") } }
-            }
-            exportStatus?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
 
@@ -117,7 +135,7 @@ fun HistoryScreen(
                         "No scan matches that search."
                     },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = AppColors.InkMuted,
                     modifier = Modifier.padding(vertical = 12.dp)
                 )
             }
@@ -131,20 +149,33 @@ fun HistoryScreen(
 
 @Composable
 private fun SummaryCard(summary: HistoryStore.Summary) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp)) {
-            Text("Summary", style = MaterialTheme.typography.titleMedium)
+    AppCard {
+        Column(Modifier.padding(16.dp)) {
+            SectionLabel("Summary")
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Figure("Scans", summary.total.toString())
-                Figure("Failed", summary.failed.toString())
-                Figure("Passed", summary.passed.toString())
-                Figure("Products", summary.distinctProducts.toString())
+            Row(modifier = Modifier.padding(top = 12.dp)) {
+                Figure("Scans", summary.total.toString(), AppColors.Ink, Modifier.weight(1f))
+                FigureDivider()
+                Figure(
+                    label = "Failed",
+                    value = summary.failed.toString(),
+                    color = StatusColors.FailAccent,
+                    modifier = Modifier.weight(1f)
+                )
+                FigureDivider()
+                Figure(
+                    label = "Passed",
+                    value = summary.passed.toString(),
+                    color = StatusColors.PassAccent,
+                    modifier = Modifier.weight(1f)
+                )
+                FigureDivider()
+                Figure(
+                    label = "Products",
+                    value = summary.distinctProducts.toString(),
+                    color = AppColors.InkMuted,
+                    modifier = Modifier.weight(1f)
+                )
             }
 
             // A scan that reached neither PASS nor FAIL is not a neutral
@@ -154,22 +185,33 @@ private fun SummaryCard(summary: HistoryStore.Summary) {
                 text = "%.0f%% of scans reached a definitive verdict"
                     .format(summary.conclusiveRate * 100),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 10.dp)
+                color = AppColors.InkMuted,
+                modifier = Modifier.padding(top = 14.dp)
             )
 
             if (summary.topViolations.isNotEmpty()) {
-                HorizontalDivider(Modifier.padding(vertical = 10.dp))
-                Text("Most frequent violations", style = MaterialTheme.typography.titleSmall)
+                HorizontalDivider(
+                    color = AppColors.DividerSoft,
+                    modifier = Modifier.padding(vertical = 12.dp)
+                )
+                SectionLabel("Most frequent violations")
                 summary.topViolations.forEach { (ruleId, count) ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 4.dp),
+                            .padding(top = 6.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(ruleId, style = MaterialTheme.typography.bodyMedium)
-                        Text(count.toString(), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = ruleId,
+                            style = MetricStyle,
+                            color = AppColors.Ink
+                        )
+                        Text(
+                            text = count.toString(),
+                            style = MetricStyle,
+                            color = AppColors.InkMuted
+                        )
                     }
                 }
             }
@@ -185,34 +227,40 @@ private fun SummaryCard(summary: HistoryStore.Summary) {
  */
 @Composable
 private fun ConflictsCard(conflicts: List<HistoryStore.Conflict>) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp)) {
-            Text("Conflicting declarations", style = MaterialTheme.typography.titleMedium)
+    AppCard(borderColor = StatusColors.Review.border) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                text = "Conflicting declarations",
+                style = MaterialTheme.typography.titleMedium,
+                color = AppColors.Ink
+            )
             Text(
                 text = "Scans of the same product that do not agree. No reference " +
                     "value is involved — these packs contradict one another.",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+                color = AppColors.InkMuted,
+                modifier = Modifier.padding(top = 2.dp, bottom = 10.dp)
             )
             conflicts.forEach { conflict ->
                 Text(
                     text = conflict.product + " — " + conflict.scans + " scans",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
+                    style = MaterialTheme.typography.titleSmall,
+                    color = AppColors.Ink,
+                    modifier = Modifier.padding(top = 6.dp)
                 )
                 if (conflict.conflictingPrices.isNotEmpty()) {
                     Text(
-                        "Price read as: " + conflict.conflictingPrices.joinToString(", "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
+                        text = "Price read as: " + conflict.conflictingPrices.joinToString(", "),
+                        style = MetricStyle,
+                        color = StatusColors.Review.content
                     )
                 }
                 if (conflict.conflictingQuantities.isNotEmpty()) {
                     Text(
-                        "Quantity read as: " + conflict.conflictingQuantities.joinToString(", "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
+                        text = "Quantity read as: " +
+                            conflict.conflictingQuantities.joinToString(", "),
+                        style = MetricStyle,
+                        color = StatusColors.Review.content
                     )
                 }
             }
@@ -221,50 +269,64 @@ private fun ConflictsCard(conflicts: List<HistoryStore.Conflict>) {
 }
 
 @Composable
-private fun Figure(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, style = MaterialTheme.typography.headlineSmall)
+private fun Figure(
+    label: String,
+    value: String,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(text = value, style = MaterialTheme.typography.headlineMedium, color = color)
         Text(
-            label,
+            text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = AppColors.InkMuted,
+            modifier = Modifier.padding(top = 4.dp)
         )
     }
+}
+
+@Composable
+private fun FigureDivider() {
+    Box(
+        modifier = Modifier
+            .width(1.dp)
+            .height(34.dp)
+            .background(AppColors.DividerSoft)
+    )
 }
 
 @Composable
 private fun HistoryRow(record: ScanRecord, onDelete: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp)) {
+    AppCard {
+        Column(Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
-                Text(
-                    record.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    record.verdict.name,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = when (record.verdict) {
-                        Verdict.FAIL -> MaterialTheme.colorScheme.error
-                        Verdict.PASS -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = record.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = AppColors.Ink
+                    )
+                    Text(
+                        text = TIMESTAMP.format(Date(record.scannedAt)) +
+                            "  ·  ruleset " + record.rulesetVersion,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AppColors.InkMuted,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+                StatusPill(
+                    text = readable(record.verdict),
+                    palette = paletteFor(record.verdict),
+                    modifier = Modifier.padding(start = 12.dp)
                 )
             }
-
-            Text(
-                text = TIMESTAMP.format(Date(record.scannedAt)) +
-                    "  ·  ruleset " + record.rulesetVersion,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
 
             listOfNotNull(
                 record.mrp?.let { "MRP " + it },
@@ -272,35 +334,44 @@ private fun HistoryRow(record: ScanRecord, onDelete: () -> Unit) {
                 record.batchNumber?.let { "Batch " + it }
             ).takeIf { it.isNotEmpty() }?.let {
                 Text(
-                    it.joinToString("  ·  "),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = 4.dp)
+                    text = it.joinToString("  ·  "),
+                    style = MetricStyle,
+                    color = AppColors.Ink,
+                    modifier = Modifier.padding(top = 8.dp)
                 )
             }
 
             if (record.violations.isNotEmpty()) {
                 Text(
                     text = record.violations.joinToString(", ") { it.ruleId },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
+                    style = MetricStyle,
+                    color = StatusColors.Fail.content,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
 
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp),
+                modifier = Modifier.padding(top = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(onClick = { expanded = !expanded }) {
-                    Text(if (expanded) "Hide" else "Details")
+                SecondaryButton(
+                    text = if (expanded) "Hide" else "Details",
+                    onClick = { expanded = !expanded }
+                )
+                TextButton(onClick = onDelete) {
+                    Text(
+                        text = "Delete",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = StatusColors.Fail.content
+                    )
                 }
-                TextButton(onClick = onDelete) { Text("Delete") }
             }
 
             if (expanded) {
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(
+                    color = AppColors.DividerSoft,
+                    modifier = Modifier.padding(vertical = 10.dp)
+                )
 
                 // Every check, not only the violations. A report that listed
                 // failures alone could not show that anything was examined,
@@ -309,33 +380,35 @@ private fun HistoryRow(record: ScanRecord, onDelete: () -> Unit) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 3.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            check.ruleId + " — " + check.ruleName,
+                            text = check.ruleId + " — " + check.ruleName,
                             style = MaterialTheme.typography.bodySmall,
+                            color = AppColors.InkMuted,
                             modifier = Modifier.weight(1f)
                         )
                         Text(
-                            check.status.name,
+                            text = readable(check.status),
                             style = MaterialTheme.typography.labelSmall,
-                            color = when (check.status) {
-                                RuleStatus.FAIL -> MaterialTheme.colorScheme.error
-                                RuleStatus.PASS -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            }
+                            color = accentFor(check.status),
+                            modifier = Modifier.padding(start = 8.dp)
                         )
                     }
                 }
 
                 if (record.rawLines.isNotEmpty()) {
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    Text("What the scanner read", style = MaterialTheme.typography.titleSmall)
+                    HorizontalDivider(
+                        color = AppColors.DividerSoft,
+                        modifier = Modifier.padding(vertical = 10.dp)
+                    )
+                    SectionLabel("What the scanner read")
                     Text(
-                        record.rawLines.joinToString("\n"),
+                        text = record.rawLines.joinToString("\n"),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = AppColors.InkMuted,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
