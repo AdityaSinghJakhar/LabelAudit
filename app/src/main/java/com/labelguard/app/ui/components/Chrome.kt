@@ -37,6 +37,7 @@ import com.labelguard.app.ui.theme.StatusPalette
  * it. Painting them the same colour is the exact confusion the pipeline is
  * built to prevent.
  */
+@Composable
 fun paletteFor(status: RuleStatus): StatusPalette = when (status) {
     RuleStatus.PASS -> StatusColors.Pass
     RuleStatus.FAIL -> StatusColors.Fail
@@ -45,6 +46,7 @@ fun paletteFor(status: RuleStatus): StatusPalette = when (status) {
         StatusColors.Neutral
 }
 
+@Composable
 fun paletteFor(verdict: Verdict): StatusPalette = when (verdict) {
     Verdict.PASS -> StatusColors.Pass
     Verdict.FAIL -> StatusColors.Fail
@@ -52,6 +54,7 @@ fun paletteFor(verdict: Verdict): StatusPalette = when (verdict) {
     Verdict.NOT_ASSESSABLE -> StatusColors.Neutral
 }
 
+@Composable
 fun accentFor(status: RuleStatus): Color = when (status) {
     RuleStatus.PASS -> StatusColors.PassAccent
     RuleStatus.FAIL -> StatusColors.FailAccent
@@ -60,6 +63,7 @@ fun accentFor(status: RuleStatus): Color = when (status) {
         StatusColors.NeutralAccent
 }
 
+@Composable
 fun accentFor(verdict: Verdict): Color = when (verdict) {
     Verdict.PASS -> StatusColors.PassAccent
     Verdict.FAIL -> StatusColors.FailAccent

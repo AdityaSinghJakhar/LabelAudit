@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -27,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.labelguard.app.auth.Role
+import com.labelguard.app.ui.theme.ThemeMode
 
 /**
  * Choosing how the app is being used.
@@ -41,6 +43,8 @@ fun RoleScreen(
     role: Role,
     hasPasscode: Boolean,
     message: String?,
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
+    onSetThemeMode: (ThemeMode) -> Unit = {},
     onClaimInspector: (String) -> Unit,
     onRelease: () -> Unit,
     /** Null for a shopper: a bad calibration silently skews every scan. */
@@ -87,6 +91,30 @@ fun RoleScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)
                 )
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Appearance", fontWeight = FontWeight.Medium)
+                Text(
+                    "Select theme preference:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ThemeMode.values().forEach { mode ->
+                        FilterChip(
+                            selected = themeMode == mode,
+                            onClick = { onSetThemeMode(mode) },
+                            label = { Text(mode.label) }
+                        )
+                    }
+                }
             }
         }
 

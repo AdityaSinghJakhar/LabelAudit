@@ -90,6 +90,8 @@ private fun GlassButton(
 private fun ViewfinderMenu(
     roleLabel: String,
     historyCount: Int,
+    themeLabel: String = "",
+    onToggleTheme: () -> Unit = {},
     onOpenRole: () -> Unit,
     onOpenHistory: () -> Unit,
     onUpload: () -> Unit
@@ -114,6 +116,12 @@ private fun ViewfinderMenu(
                 text = { Text("Using as: " + roleLabel) },
                 onClick = { open = false; onOpenRole() }
             )
+            if (themeLabel.isNotBlank()) {
+                DropdownMenuItem(
+                    text = { Text("Theme: $themeLabel") },
+                    onClick = { open = false; onToggleTheme() }
+                )
+            }
         }
     }
 }
@@ -143,6 +151,8 @@ fun CameraScreen(
     optics: CameraOptics,
     roleLabel: String = "",
     historyCount: Int = 0,
+    themeLabel: String = "",
+    onToggleTheme: () -> Unit = {},
     onOpenRole: () -> Unit = {},
     onOpenHistory: () -> Unit = {},
     onUpload: () -> Unit = {},
@@ -163,6 +173,8 @@ fun CameraScreen(
             optics = optics,
             roleLabel = roleLabel,
             historyCount = historyCount,
+            themeLabel = themeLabel,
+            onToggleTheme = onToggleTheme,
             onOpenRole = onOpenRole,
             onOpenHistory = onOpenHistory,
             onUpload = onUpload,
@@ -183,6 +195,8 @@ private fun CameraContent(
     optics: CameraOptics,
     roleLabel: String,
     historyCount: Int,
+    themeLabel: String,
+    onToggleTheme: () -> Unit,
     onOpenRole: () -> Unit,
     onOpenHistory: () -> Unit,
     onUpload: () -> Unit,
@@ -272,6 +286,8 @@ private fun CameraContent(
                 ViewfinderMenu(
                     roleLabel = roleLabel,
                     historyCount = historyCount,
+                    themeLabel = themeLabel,
+                    onToggleTheme = onToggleTheme,
                     onOpenRole = onOpenRole,
                     onOpenHistory = onOpenHistory,
                     onUpload = onUpload

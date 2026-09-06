@@ -31,6 +31,8 @@ import com.labelguard.app.report.ResultsExport
 import com.labelguard.app.report.ScanReport
 import com.labelguard.app.sync.BackendResolver
 import com.labelguard.app.sync.SyncClient
+import com.labelguard.app.ui.theme.ThemeMode
+import com.labelguard.app.ui.theme.ThemeStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -285,6 +287,25 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearRoleMessage() {
         _roleMessage.value = null
+    }
+
+    private val themeStore = ThemeStore(application)
+
+    private val _themeMode = MutableStateFlow(themeStore.themeMode)
+    val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
+
+    fun setThemeMode(mode: ThemeMode) {
+        themeStore.themeMode = mode
+        _themeMode.value = mode
+    }
+
+    fun toggleTheme() {
+        val next = when (_themeMode.value) {
+            ThemeMode.SYSTEM -> ThemeMode.DARK
+            ThemeMode.DARK -> ThemeMode.LIGHT
+            ThemeMode.LIGHT -> ThemeMode.SYSTEM
+        }
+        setThemeMode(next)
     }
 
     fun can(capability: Role.Capability): Boolean = _role.value.can(capability)

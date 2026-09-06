@@ -191,6 +191,7 @@ private fun BulkRow(item: BulkItem, onOpen: (BulkItem) -> Unit) {
     }
 }
 
+@Composable
 private fun paletteOf(verdict: Verdict?): StatusPalette =
     verdict?.let { paletteFor(it) } ?: StatusColors.Neutral
 

@@ -30,7 +30,9 @@ import com.labelguard.app.ui.screens.HistoryScreen
 import com.labelguard.app.ui.screens.CalibrationScreen
 import com.labelguard.app.ui.screens.RoleScreen
 import com.labelguard.app.ui.screens.ReportScreen
+import androidx.compose.foundation.isSystemInDarkTheme
 import com.labelguard.app.ui.theme.LabelGuardTheme
+import com.labelguard.app.ui.theme.ThemeMode
 import com.labelguard.app.viewmodel.ExportedPdf
 import com.labelguard.app.viewmodel.ScanState
 import com.labelguard.app.viewmodel.ScanViewModel
@@ -40,8 +42,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            LabelGuardTheme {
-                LabelGuardApp()
+            val viewModel: ScanViewModel = viewModel()
+            val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+            val isDark = when (themeMode) {
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                ThemeMode.DARK -> true
+                ThemeMode.LIGHT -> false
+            }
+            LabelGuardTheme(darkTheme = isDark) {
+                LabelGuardApp(viewModel = viewModel)
             }
         }
     }
@@ -69,6 +78,7 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
     val keepCorpus by viewModel.keepCorpus.collectAsStateWithLifecycle()
     val corpusSummary by viewModel.corpusSummary.collectAsStateWithLifecycle()
     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
+    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
 
@@ -104,6 +114,8 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
                 role = role,
                 hasPasscode = viewModel.hasInspectorPasscode,
                 message = roleMessage,
+                themeMode = themeMode,
+                onSetThemeMode = viewModel::setThemeMode,
                 onClaimInspector = viewModel::claimInspector,
                 onRelease = viewModel::releaseInspector,
                 onCalibrate = { showRoles = false; showCalibration = true }
@@ -207,6 +219,8 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
                 optics = viewModel.optics,
                 roleLabel = role.label,
                 historyCount = history.size,
+                themeLabel = themeMode.label,
+                onToggleTheme = viewModel::toggleTheme,
                 onOpenRole = { showRoles = true },
                 onOpenHistory = { showHistory = true },
                 onUpload = {
