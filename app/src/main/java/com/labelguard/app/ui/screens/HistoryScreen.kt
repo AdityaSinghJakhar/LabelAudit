@@ -63,6 +63,8 @@ fun HistoryScreen(
     onExportCsv: (() -> Unit)? = null,
     onShareCsv: (() -> Unit)? = null,
     exportStatus: String? = null,
+    syncStatus: String? = null,
+    onSyncNow: (() -> Unit)? = null,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -79,12 +81,26 @@ fun HistoryScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Inspection history",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = AppColors.Ink
-                )
-                SecondaryButton(text = "Close", onClick = onBack)
+                Column {
+                    Text(
+                        text = "Inspection history",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = AppColors.Ink
+                    )
+                    syncStatus?.let {
+                        Text(
+                            text = "Backend: $it",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AppColors.InkMuted
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    onSyncNow?.let {
+                        SecondaryButton(text = "Sync", onClick = it)
+                    }
+                    SecondaryButton(text = "Close", onClick = onBack)
+                }
             }
         }
 

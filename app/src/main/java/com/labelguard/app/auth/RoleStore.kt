@@ -22,6 +22,24 @@ class RoleStore(context: Context) {
 
     private val prefs = context.getSharedPreferences("labelguard_role", Context.MODE_PRIVATE)
 
+    /** Persistent device identifier generated once per installation. */
+    val deviceId: String
+        get() {
+            var id = prefs.getString(KEY_DEVICE_ID, null)
+            if (id == null) {
+                id = java.util.UUID.randomUUID().toString()
+                prefs.edit().putString(KEY_DEVICE_ID, id).apply()
+            }
+            return id
+        }
+
+    /** Bearer token issued by sync backend upon claiming inspector or registering. */
+    var token: String?
+        get() = prefs.getString(KEY_TOKEN, null)
+        set(value) {
+            prefs.edit().putString(KEY_TOKEN, value).apply()
+        }
+
     /** Everyone starts as a shopper; the larger audience needs no setup. */
     var role: Role
         get() = runCatching { Role.valueOf(prefs.getString(KEY_ROLE, null) ?: "") }
@@ -71,6 +89,7 @@ class RoleStore(context: Context) {
     /** Step back down. Never gated — giving up authority needs no proof. */
     fun releaseInspector() {
         role = Role.CONSUMER
+        token = null
     }
 
     /**
@@ -102,5 +121,7 @@ class RoleStore(context: Context) {
         private const val KEY_ROLE = "role"
         private const val KEY_DIGEST = "passcode_digest"
         private const val KEY_SALT = "passcode_salt"
+        private const val KEY_DEVICE_ID = "device_id"
+        private const val KEY_TOKEN = "bearer_token"
     }
 }

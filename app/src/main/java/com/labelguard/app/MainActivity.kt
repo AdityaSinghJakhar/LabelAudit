@@ -68,6 +68,7 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
     val roleMessage by viewModel.roleMessage.collectAsStateWithLifecycle()
     val keepCorpus by viewModel.keepCorpus.collectAsStateWithLifecycle()
     val corpusSummary by viewModel.corpusSummary.collectAsStateWithLifecycle()
+    val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
 
@@ -141,6 +142,8 @@ private fun LabelGuardApp(viewModel: ScanViewModel = viewModel()) {
                     .takeIf { it.isNotEmpty() }
                     ?.let { files -> { shareResults(context, files) } },
                 exportStatus = exportStatus,
+                syncStatus = syncStatus,
+                onSyncNow = viewModel::syncAllPending,
                 onBack = { showHistory = false },
                 modifier = Modifier.padding(innerPadding)
             )

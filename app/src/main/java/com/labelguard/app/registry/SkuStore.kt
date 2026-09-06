@@ -54,6 +54,19 @@ class SkuStore(context: Context) {
         save(load().filterNot { it.skuId == skuId })
     }
 
+    /** Merges remote SKU records pulled from sync backend into local registry. */
+    fun merge(remoteRecords: List<SkuRecord>) {
+        if (remoteRecords.isEmpty()) return
+        val map = load().associateBy { it.skuId }.toMutableMap()
+        for (remote in remoteRecords) {
+            val existing = map[remote.skuId]
+            if (existing == null || remote.savedAt >= existing.savedAt || remote.source == RegistrySource.IMPORTED) {
+                map[remote.skuId] = remote
+            }
+        }
+        save(map.values.toList())
+    }
+
     /**
      * The registered SKU this scan is most likely to be, or null.
      *

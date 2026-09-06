@@ -25,9 +25,12 @@ import com.labelguard.app.pipeline.Ruleset
 import com.labelguard.app.registry.Enrolment
 import com.labelguard.app.registry.SkuRecord
 import com.labelguard.app.registry.SkuStore
+import android.util.Log
 import com.labelguard.app.report.ReportPdf
 import com.labelguard.app.report.ResultsExport
 import com.labelguard.app.report.ScanReport
+import com.labelguard.app.sync.BackendResolver
+import com.labelguard.app.sync.SyncClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -95,6 +98,12 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     private val _exportedResults = MutableStateFlow<List<File>>(emptyList())
     val exportedResults: StateFlow<List<File>> = _exportedResults.asStateFlow()
 
+    private val _syncStatus = MutableStateFlow<String?>("Local only")
+    val syncStatus: StateFlow<String?> = _syncStatus.asStateFlow()
+
+    private val _fleetConflicts = MutableStateFlow<List<HistoryStore.Conflict>>(emptyList())
+    val fleetConflicts: StateFlow<List<HistoryStore.Conflict>> = _fleetConflicts.asStateFlow()
+
     /** Parsed once; the ruleset does not change while the app runs. */
     private val ruleset: Ruleset by lazy {
         getApplication<Application>().assets.open("ruleset.yaml").use(Ruleset::load)
@@ -147,8 +156,24 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun keepForEvaluation(report: ScanReport, frames: List<File>) {
         if (!_keepCorpus.value) return
-        corpusStore.keep(report, frames)
+        val entry = corpusStore.keep(report, frames)
         _corpusSummary.value = corpusStore.summary()
+        if (entry != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val scanJson = File(entry.directory, CorpusStore.SCAN_FILE)
+                    .takeIf { it.exists() }?.readText().orEmpty()
+                val frameFiles = entry.directory.listFiles()
+                    ?.filter { it.isFile && it.extension.equals("jpg", true) }
+                    .orEmpty()
+                SyncClient.uploadCorpus(
+                    cid = entry.id,
+                    scanJson = scanJson,
+                    frames = frameFiles,
+                    deviceId = roleStore.deviceId,
+                    token = roleStore.token
+                )
+            }
+        }
     }
 
     private val calibrationStore = CalibrationStore(application)
@@ -160,6 +185,28 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         // Restore before the first scan, or the first scan of a session would
         // silently measure with the wide uncorrected band.
         optics.calibration = _calibration.value
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (BackendResolver.isOnline()) {
+                    _syncStatus.value = "Connected"
+                    refreshRegistryFromBackend()
+                    refreshFleetConflicts()
+                    if (_calibration.value == null) {
+                        SyncClient.fetchCalibration(roleStore.deviceId).getOrNull()?.let { remoteCal ->
+                            calibrationStore.save(remoteCal)
+                            _calibration.value = remoteCal
+                            optics.calibration = remoteCal
+                        }
+                    }
+                } else {
+                    _syncStatus.value = "Local only"
+                }
+            } catch (e: Exception) {
+                Log.w("ScanViewModel", "Initial sync check: ${e.message}")
+                _syncStatus.value = "Local only"
+            }
+        }
     }
 
     /**
@@ -177,6 +224,10 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         _calibration.value = calibration
         optics.calibration = calibration
         _exportStatus.value = "Camera calibrated: %+.0f%%".format(calibration.errorPercent)
+
+        viewModelScope.launch(Dispatchers.IO) {
+            SyncClient.syncCalibration(roleStore.deviceId, calibration, roleStore.token)
+        }
     }
 
     fun clearCalibration() {
@@ -205,6 +256,15 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     null
                 }
+
+                viewModelScope.launch(Dispatchers.IO) {
+                    SyncClient.claimInspector(roleStore.deviceId, passcode).onSuccess { claimRes ->
+                        roleStore.token = claimRes.token
+                        _syncStatus.value = "Connected (Inspector)"
+                        refreshRegistryFromBackend()
+                        refreshFleetConflicts()
+                    }
+                }
             }
 
             is RoleStore.Result.Rejected -> _roleMessage.value = result.reason
@@ -212,6 +272,12 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun releaseInspector() {
+        val token = roleStore.token
+        if (!token.isNullOrBlank()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                SyncClient.releaseInspector(roleStore.deviceId, token)
+            }
+        }
         roleStore.releaseInspector()
         _role.value = roleStore.role
         _roleMessage.value = null
@@ -248,9 +314,24 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Declarations that disagree across scans of the same product. Needs no
      * reference data and nobody's word: the packs contradict each other.
+     * Merges local history conflicts with fleet-wide conflicts if available.
      */
-    fun historyConflicts(): List<HistoryStore.Conflict> =
-        historyStore.conflicts(_history.value)
+    fun historyConflicts(): List<HistoryStore.Conflict> {
+        val local = historyStore.conflicts(_history.value)
+        val fleet = _fleetConflicts.value
+        if (fleet.isEmpty()) return local
+        val products = (local.map { it.product } + fleet.map { it.product }).distinct()
+        return products.map { prod ->
+            val l = local.find { it.product == prod }
+            val f = fleet.find { it.product == prod }
+            HistoryStore.Conflict(
+                product = prod,
+                scans = (l?.scans ?: 0).coerceAtLeast(f?.scans ?: 0),
+                conflictingPrices = ((l?.conflictingPrices ?: emptyList()) + (f?.conflictingPrices ?: emptyList())).distinct(),
+                conflictingQuantities = ((l?.conflictingQuantities ?: emptyList()) + (f?.conflictingQuantities ?: emptyList())).distinct()
+            )
+        }
+    }
 
     /**
      * The history as a spreadsheet, for the enforcement return that has to be
@@ -291,7 +372,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Every completed scan is recorded; the history is the audit trail. */
     private fun record(report: ScanReport) {
-        _history.value = historyStore.add(ScanRecord.from(report))
+        val record = ScanRecord.from(report)
+        _history.value = historyStore.add(record)
+        viewModelScope.launch(Dispatchers.IO) {
+            SyncClient.syncScan(record, roleStore.deviceId, roleStore.token)
+                .onSuccess {
+                    _syncStatus.value = "Synced"
+                }
+                .onFailure {
+                    _syncStatus.value = "Local only"
+                }
+        }
     }
 
     private val _registry = MutableStateFlow(skuStore.load())
@@ -312,14 +403,58 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (skuId.isBlank() || lastScanFields.isEmpty()) return
-        skuStore.put(Enrolment.fromScan(skuId, lastScanFields, note))
+        val record = Enrolment.fromScan(skuId, lastScanFields, note)
+        skuStore.put(record)
         _registry.value = skuStore.load()
         _exportStatus.value = "Registered '$skuId' from this scan"
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val token = roleStore.token
+            if (!token.isNullOrBlank()) {
+                SyncClient.enrolSku(record, roleStore.deviceId, token)
+            }
+        }
     }
 
     fun removeSku(skuId: String) {
         skuStore.remove(skuId)
         _registry.value = skuStore.load()
+    }
+
+    fun refreshRegistryFromBackend() {
+        viewModelScope.launch(Dispatchers.IO) {
+            SyncClient.fetchSkus(roleStore.deviceId, roleStore.token)
+                .onSuccess { remoteSkus ->
+                    if (remoteSkus.isNotEmpty()) {
+                        skuStore.merge(remoteSkus)
+                        _registry.value = skuStore.load()
+                    }
+                }
+        }
+    }
+
+    fun refreshFleetConflicts() {
+        viewModelScope.launch(Dispatchers.IO) {
+            SyncClient.fetchConflicts()
+                .onSuccess { conflicts ->
+                    _fleetConflicts.value = conflicts
+                }
+        }
+    }
+
+    fun syncAllPending() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _syncStatus.value = "Syncing…"
+            var anySuccess = false
+            for (record in _history.value) {
+                if (SyncClient.syncScan(record, roleStore.deviceId, roleStore.token).isSuccess) {
+                    anySuccess = true
+                }
+            }
+            _syncStatus.value = if (anySuccess) "Synced" else "Local only"
+            refreshFleetConflicts()
+            refreshRegistryFromBackend()
+        }
     }
 
     /**
