@@ -1,8 +1,25 @@
+"""
+NOT CURRENTLY WIRED UP. This is a self-contained, independently-tested
+Hungarian-assignment field matcher (declaration keyword -> nearby value,
+scored on distance/alignment/OCR confidence), but nothing in the live
+scan pipeline calls into it -- app/api/scan.py's actual field-to-SKU
+matching goes through app/services/registry_matcher.py instead, which
+matches an already-extracted identity dict (from
+spatial_graph_extractor.py) against db.models.Sku rows, rather than
+matching raw anchor tokens to nearby value tokens the way this module
+does. Kept here as a candidate replacement for
+spatial_graph_extractor.py's current keyword/regex candidate generation,
+should that need real anchor-to-value spatial matching later (see that
+module's field_extraction.py sibling docstring: naive matching is a
+deliberately staged limitation, not a final design). If you wire this in,
+update this docstring.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from math import sqrt
-from typing import Any, Sequence
+from typing import Sequence
 
 
 @dataclass(frozen=True)

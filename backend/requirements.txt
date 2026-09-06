@@ -14,17 +14,23 @@ passlib
 bcrypt
 
 # --- server-side OCR (re-introduced) ---
-# PaddleOCR 2.9.1 requires numpy<2, and imgaug (a transitive dep) uses APIs
-# removed in numpy 2.0. scipy/scikit-image/opencv are pinned to the last
-# releases built against the numpy 1.x ABI so the stack stays consistent.
-numpy==1.26.4
-scipy==1.13.1
-scikit-image==0.24.0
-opencv-python==4.10.0.84
-opencv-contrib-python==4.10.0.84
-opencv-python-headless==4.10.0.84
-paddlepaddle==3.0.0
-paddleocr==2.9.1
+# PaddleOCR 3.x (its API changed significantly from 2.x -- see
+# app/services/ocr_service.py's module docstring for exactly what and
+# why). Unlike the 2.x line, PaddleOCR 3.x's dependency tree resolves
+# cleanly against numpy 2.x, so there is no numpy<2 pin here -- if you
+# see one reappear (e.g. from a stale lockfile), that's a sign something
+# pulled in paddleocr 2.x instead of 3.x, and app/services/ocr_service.py
+# will fail with `PaddleOCR.predict() got an unexpected keyword argument
+# 'cls'` the moment a scan is submitted.
+paddlepaddle>=3.0.0
+paddleocr>=3.0.0,<4.0.0
+
+# scipy.optimize.linear_sum_assignment (Hungarian assignment) is a direct
+# dependency of app/services/registry_matcher.py and
+# app/services/spatial_graph_extractor.py -- listed explicitly, not left
+# to arrive transitively via paddleocr, so SKU matching keeps working
+# even if the OCR stack above is ever made optional.
+scipy>=1.13
 
 # Domain logic (rules loading, shared models) -- installed editable from
 # the sibling labelguard/ package during development.

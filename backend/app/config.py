@@ -17,7 +17,11 @@ class Settings(BaseSettings):
     # Each must be migrated independently -- see scripts/migrate_shards.py.
     database_shard_urls: str = ""
 
-    auth_secret_key: str
+    # Dev-only default so the app boots without an .env file for local
+    # smoke-testing. MUST be overridden (via AUTH_SECRET_KEY or .env) in
+    # any deployment that leaves the local machine -- this default is
+    # public, in source control, and therefore worthless as a secret.
+    auth_secret_key: str = "dev-insecure-secret-change-me"
 
     storage_dir: Path = Path("storage")
     max_upload_bytes: int = 15 * 1024 * 1024

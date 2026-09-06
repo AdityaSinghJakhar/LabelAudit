@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import health, scan
+from app.api import health, registry, scan
 from app.config import settings
 from app.services import ocr_service
 
@@ -25,6 +25,7 @@ app = FastAPI(
 
 app.include_router(health.router, prefix="/api")
 app.include_router(scan.router, prefix="/api")
+app.include_router(registry.router, prefix="/api")
 
 
 @app.get("/")

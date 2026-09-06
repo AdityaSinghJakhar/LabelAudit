@@ -15,8 +15,18 @@ Process:
 Output:
     MatchDecision
 
-The matcher never invents a SKU.
-A candidate below the rejection threshold is rejected.
+The matcher never invents a SKU. A candidate below the rejection
+threshold is rejected.
+
+SYNCHRONOUS by design. db/sharding.py builds plain sqlalchemy.orm.Session
+objects (see ShardRouter.session_for_key) -- there is no async engine
+anywhere in this backend's actual request path (app/api/scan.py's
+_shard_session dependency yields one of those sessions directly). An
+earlier version of this module was written against
+sqlalchemy.ext.asyncio.AsyncSession, which cannot be driven by a sync
+Session; that mismatch is what made the whole scan/registry-matching path
+unreachable. Keep this synchronous unless db/sharding.py itself switches to
+an async engine.
 """
 
 from __future__ import annotations
@@ -25,7 +35,7 @@ from dataclasses import dataclass
 
 from scipy.optimize import linear_sum_assignment
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from db.models import Sku
 from app.services.spatial_graph_extractor import SpatialExtractionResult
@@ -187,6 +197,49 @@ def _field_similarity(
     return 0.0
 
 
+def _sku_has_value(field: str, sku: Sku) -> bool:
+    """
+    Whether the registry has anything recorded for this field at all --
+    distinct from _field_similarity's 0.0, which means either "no
+    registry value" or "registry value present but doesn't match".
+    _hungarian_match needs to tell those apart: the first is a fact about
+    the registry's completeness (exclude the field from scoring
+    entirely), the second is a real mismatch (keep it, and let it drag
+    the match score down -- see that function's comments).
+    """
+
+    if field == "brand":
+        return bool(sku.brand_strings)
+
+    if field == "mrp":
+        return sku.mrp_exact is not None
+
+    if field == "net_quantity":
+        return bool(sku.net_quantity)
+
+    return False
+
+
+def _sku_field_display_value(sku: Sku, field: str) -> str | None:
+    """
+    Human-readable registry value for a field, for evidence/messages --
+    NOT used for scoring (see _field_similarity for that). Kept separate
+    so a display tweak here can never silently change match outcomes.
+    """
+
+    if field == "brand":
+        brands = sku.brand_strings or []
+        return brands[0] if brands else None
+
+    if field == "mrp":
+        return _normalize_mrp(sku.mrp_exact) or None
+
+    if field == "net_quantity":
+        return sku.net_quantity
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Hungarian assignment
 # ---------------------------------------------------------------------------
@@ -261,11 +314,31 @@ def _hungarian_match(
         extracted_field = extracted_fields[row_index]
         registry_field = registry_fields[col_index]
 
-        score = matrix[row_index][col_index]
-
-        if score <= 0:
+        # A genuine non-assignment: the extracted field has no
+        # corresponding registry field at all (only same-named fields
+        # ever score > 0 in this matrix -- see the loop building `matrix`
+        # above). Exclude these; they carry no comparison to report.
+        if extracted_field != registry_field:
             continue
 
+        # A registry field with no value recorded is a fact about the
+        # registry ("this SKU never had an MRP entered"), not a
+        # comparison outcome -- exclude it, rather than letting a blank
+        # registry field count as agreement OR disagreement.
+        if not _sku_has_value(registry_field, sku):
+            continue
+
+        score = matrix[row_index][col_index]
+
+        # IMPORTANT: score == 0.0 (a real mismatch -- e.g. the label says
+        # 45.00 and the registry says 99.00) is kept, not dropped. A
+        # previous version of this function discarded any `score <= 0`
+        # row here, which meant a wrong MRP silently vanished from both
+        # the overall match score and the evidence trail instead of
+        # dragging the match down or surfacing as a comparable FAIL --
+        # the registry match would report MATCHED at full confidence
+        # while quietly never having checked the one field that was
+        # actually wrong.
         matches.append(
             FieldMatch(
                 extracted_field=extracted_field,
@@ -278,6 +351,10 @@ def _hungarian_match(
             "registry_field": registry_field,
             "score": round(score, 4),
             "extracted": extracted_identity[extracted_field],
+            # The registry's own value for this field, so a FAIL message
+            # can say what the pack should have said, not just that it
+            # didn't match.
+            "registry": _sku_field_display_value(sku, registry_field),
         }
 
         total_score += score
@@ -347,8 +424,8 @@ def match_sku(
 # ---------------------------------------------------------------------------
 
 
-async def match_registry(
-    db: AsyncSession,
+def match_registry(
+    db: Session,
     extracted: SpatialExtractionResult,
     rejection_threshold: float = DEFAULT_REJECTION_THRESHOLD,
 ) -> MatchDecision:
@@ -356,7 +433,7 @@ async def match_registry(
     Search the Sku registry and select the highest-scoring candidate.
     """
 
-    result = await db.execute(
+    result = db.execute(
         select(Sku)
     )
 
@@ -392,3 +469,43 @@ async def match_registry(
     assert best_decision is not None
 
     return best_decision
+
+
+# ---------------------------------------------------------------------------
+# Persistence
+# ---------------------------------------------------------------------------
+
+
+def save_match_registry(
+    db: Session,
+    scan_id: str,
+    decision: MatchDecision,
+):
+    """
+    Persist the registry matching decision for a scan. Returns the
+    inserted db.models.MatchesRegistry row (imported locally to avoid a
+    module-level import cycle with db.models, which does not itself
+    import from app.services).
+
+    Does not commit -- the caller (app/api/scan.py) commits once, together
+    with the Scan and ScanCheck rows, so a scan and its match decision are
+    never observable in an inconsistent state.
+    """
+
+    from db.models import MatchesRegistry
+
+    record = MatchesRegistry(
+        scan_id=scan_id,
+        sku_id=decision.sku.id if decision.sku is not None else None,
+        status=decision.status,
+        score=decision.score,
+        rejection_threshold=decision.rejection_threshold,
+        match_method=decision.match_method,
+        evidence=decision.evidence,
+        extracted_identity=decision.extracted_identity,
+    )
+
+    db.add(record)
+    db.flush()
+
+    return record

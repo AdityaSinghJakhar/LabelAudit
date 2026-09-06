@@ -9,11 +9,48 @@ class BoundingBox(BaseModel):
     x1: int
     y1: int
 
+    @property
+    def center_x(self) -> float:
+        return (self.x0 + self.x1) / 2
+
+    @property
+    def center_y(self) -> float:
+        return (self.y0 + self.y1) / 2
+
+    @property
+    def width(self) -> float:
+        return self.x1 - self.x0
+
+    @property
+    def height(self) -> float:
+        return self.y1 - self.y0
+
 
 class OcrToken(BaseModel):
     text: str
     confidence: float = Field(ge=0.0, le=1.0)
     bbox: BoundingBox
+
+    # Convenience accessors so downstream spatial code (see
+    # app/services/spatial_graph_extractor.py) can read x/y/width/height
+    # directly off a token without every caller reaching into bbox itself.
+    # Derived from bbox, never stored independently, so there is exactly
+    # one source of truth for a token's position.
+    @property
+    def x(self) -> float:
+        return self.bbox.center_x
+
+    @property
+    def y(self) -> float:
+        return self.bbox.center_y
+
+    @property
+    def width(self) -> float:
+        return self.bbox.width
+
+    @property
+    def height(self) -> float:
+        return self.bbox.height
 
 
 class OcrResult(BaseModel):

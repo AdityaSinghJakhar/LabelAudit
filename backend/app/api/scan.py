@@ -27,12 +27,19 @@ from fastapi import (
 )
 
 from app.config import settings
-from app.models.scan import ScanCheckOut, ScanResult
+from app.models.scan import (
+    RegistryMatchOut,
+    ScanCheckOut,
+    ScanDetailOut,
+    ScanResult,
+    ScanSummaryOut,
+)
 from app.services import (
     ocr_service,
     rules_service,
     storage_service,
 )
+from app.services.registry_matcher import save_match_registry
 from app.services.scan_pipeline import extract_and_match
 
 from db import models
@@ -175,6 +182,10 @@ async def submit_scan(
     # 2. Spatial extraction + SKU registry matching
     # -----------------------------------------------------------------------
 
+    # Synchronous: db is a plain sqlalchemy.orm.Session from the shard
+    # router, and the spatial/registry-matching pipeline is written
+    # against that, not asyncio. See registry_matcher.py's module
+    # docstring for why.
     identity_result = extract_and_match(
         db=db,
         ocr_result=ocr_result,
@@ -187,10 +198,12 @@ async def submit_scan(
     # 3. Rule evaluation
     # -----------------------------------------------------------------------
 
-    # Keep the existing rules pipeline.
+    # `registry` (the MatchDecision from step 2) feeds matches_registry
+    # checks -- see rules_service._evaluate_matches_registry.
     evaluation = await asyncio.to_thread(
         rules_service.evaluate,
         ocr_result,
+        registry,
     )
 
     # -----------------------------------------------------------------------
@@ -265,24 +278,13 @@ async def submit_scan(
     # 6. Persist registry matching decision
     # -----------------------------------------------------------------------
 
-    db.add(
-        models.MatchesRegistry(
-            scan_id=scan_row.id,
-
-            sku_id=(
-                registry.sku.id
-                if registry.sku is not None
-                else None
-            ),
-
-            status=registry.status,
-            score=registry.score,
-            rejection_threshold=registry.rejection_threshold,
-            match_method=registry.match_method,
-
-            evidence=registry.evidence,
-            extracted_identity=registry.extracted_identity,
-        )
+    # scan_row.id only exists after the flush above, which is why this
+    # step -- unlike spatial extraction and matching themselves -- happens
+    # here rather than inside extract_and_match().
+    save_match_registry(
+        db=db,
+        scan_id=scan_row.id,
+        decision=registry,
     )
 
     # -----------------------------------------------------------------------
@@ -345,6 +347,185 @@ async def submit_scan(
 
         ocr=ocr_result,
     )
+
+
+# ---------------------------------------------------------------------------
+# Read endpoints
+# ---------------------------------------------------------------------------
+#
+# A scan's shard is determined by its owning DEVICE's device_id (see
+# db/sharding.py's module docstring: device_id is the shard key, not
+# scan_id). A caller retrieving one scan by id, or listing a device's
+# scans, therefore always supplies device_id -- that is what lets these
+# endpoints go straight to the correct shard instead of fanning out
+# across every shard to find one row. This mirrors the write path's own
+# _shard_session dependency.
+
+@router.get(
+    "/scans",
+    response_model=list[ScanSummaryOut],
+)
+def list_scans(
+    device_id: str,
+    limit: int = 50,
+) -> list[ScanSummaryOut]:
+    """
+    A device's scan history, most recent first. Mirrors the on-device
+    history list (HANDOFF.md: "every scan recorded and searchable").
+    """
+
+    if not 1 <= limit <= 200:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="limit must be between 1 and 200.",
+        )
+
+    db, _shard_index = shard_router.session_for_key(device_id)
+
+    try:
+        device = db.query(models.Device).filter_by(device_id=device_id).one_or_none()
+
+        if device is None:
+            return []
+
+        rows = (
+            db.query(models.Scan)
+            .filter_by(device_id=device.id)
+            .order_by(models.Scan.scanned_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+        return [
+            ScanSummaryOut(
+                scan_id=row.id,
+                device_id=device_id,
+                source=row.source,
+                scanned_at=row.scanned_at,
+                verdict=row.verdict,
+                ruleset_version=row.ruleset_version,
+                brand=row.brand,
+                mrp=row.mrp,
+                net_quantity=row.net_quantity,
+                title=row.title,
+            )
+            for row in rows
+        ]
+    finally:
+        db.close()
+
+
+@router.get(
+    "/scans/{scan_id}",
+    response_model=ScanDetailOut,
+)
+def get_scan(
+    scan_id: str,
+    device_id: str,
+) -> ScanDetailOut:
+    """
+    One scan's full stored detail: the Scan row, every ScanCheck, and its
+    MatchesRegistry decision if one was recorded (server_ocr scans always
+    have one; synced on-device scans never do, since matching only runs
+    server-side today).
+
+    device_id is required, not optional, because it is what selects the
+    shard scan_id might live on -- without it this endpoint would have to
+    query every shard to find one row. A client always has the device_id
+    it scanned with, so this is not an extra burden in practice, only an
+    explicit one.
+    """
+
+    db, _shard_index = shard_router.session_for_key(device_id)
+
+    try:
+        row = (
+            db.query(models.Scan)
+            .join(models.Device, models.Scan.device_id == models.Device.id)
+            .filter(
+                models.Scan.id == scan_id,
+                models.Device.device_id == device_id,
+            )
+            .one_or_none()
+        )
+
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"No scan '{scan_id}' found for device '{device_id}'. "
+                    "Either the id is wrong, or this device_id does not "
+                    "own that scan. Landing on the right shard is not "
+                    "enough -- two different device_ids can hash to the "
+                    "same shard, so ownership is checked explicitly, "
+                    "not inferred from co-location."
+                ),
+            )
+
+        checks = (
+            db.query(models.ScanCheck)
+            .filter_by(scan_id=scan_id)
+            .all()
+        )
+
+        match = (
+            db.query(models.MatchesRegistry)
+            .filter_by(scan_id=scan_id)
+            .order_by(models.MatchesRegistry.created_at.desc())
+            .first()
+        )
+
+        return ScanDetailOut(
+            scan_id=row.id,
+            device_id=device_id,
+            source=row.source,
+            scanned_at=row.scanned_at,
+            synced_at=row.synced_at,
+            verdict=row.verdict,
+            ruleset_version=row.ruleset_version,
+            brand=row.brand,
+            mrp=row.mrp,
+            net_quantity=row.net_quantity,
+            batch_number=row.batch_number,
+            mfg_date=row.mfg_date,
+            frames_used=row.frames_used,
+            raw_lines=row.raw_lines,
+            image_key=row.image_key,
+            ocr_model=row.ocr_model,
+            ocr_mean_confidence=row.ocr_mean_confidence,
+            ocr_processing_time_ms=row.ocr_processing_time_ms,
+            checks=[
+                ScanCheckOut(
+                    rule_id=c.rule_id,
+                    rule_name=c.rule_name,
+                    field=c.field,
+                    status=c.status,
+                    citation=c.citation,
+                    message=c.message,
+                    observed_value=c.observed_value,
+                )
+                for c in checks
+            ],
+            registry_match=(
+                RegistryMatchOut(
+                    status=match.status,
+                    score=match.score,
+                    rejection_threshold=match.rejection_threshold,
+                    match_method=match.match_method,
+                    sku_id=match.sku_id,
+                    evidence=(
+                        match.evidence
+                        if isinstance(match.evidence, dict)
+                        else {"items": match.evidence}
+                    ),
+                    extracted_identity=match.extracted_identity,
+                )
+                if match is not None
+                else None
+            ),
+        )
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------

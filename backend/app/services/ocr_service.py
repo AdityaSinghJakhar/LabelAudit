@@ -16,6 +16,35 @@ PaddleOCR was chosen (over on-device ML Kit) specifically because it is
 heavy: a bigger detector + recognizer than anything reasonable to bundle
 into a 54 MB APK, with first-class Devanagari support for bilingual Indian
 labels (see the SIH implementation plan's Step 3 fix on multi-script OCR).
+
+PADDLEOCR 3.x API, not 2.x. requirements.txt pins `paddleocr>=3.0.0,<4.0.0`
+(see that file's own comment for the history: it used to pin 2.9.1 with a
+numpy<2 constraint, which is what this module originally targeted and
+is exactly what broke). PaddleOCR 3.x changed its API in several
+breaking ways versus 2.x:
+
+  - `.ocr(img, cls=True)` no longer exists as a real method -- 2.x's
+    `.ocr()` took its own args and returned a nested
+    [[ (box, (text, confidence)), ... ], ...] structure. In 3.x, `.ocr()`
+    is only a thin deprecated alias for `.predict()`, which does not
+    accept a `cls` kwarg at all (TypeError: PaddleOCR.predict() got an
+    unexpected keyword argument 'cls') and returns a different result
+    shape entirely -- a list of dict-like OCRResult objects, one per
+    input image, each exposing "rec_texts" (list[str]), "rec_scores"
+    (list[float]) and "rec_boxes" (list of [left, top, right, bottom],
+    already axis-aligned -- see
+    paddlex.inference.pipelines.ocr.pipeline's convert_points_to_boxes).
+  - The old `use_angle_cls=True` constructor kwarg is deprecated in
+    favour of `use_textline_orientation=True` (see PaddleOCR's own
+    `_DEPRECATED_PARAM_NAME_MAPPING`); passing both raises, and passing
+    an unrecognised kwarg like `show_log` (also gone in 3.x) falls
+    through to the underlying pipeline wrapper's constructor instead of
+    being ignored, another way to get a confusing TypeError.
+
+This module targets 3.x's API directly. If your environment genuinely
+has PaddleOCR 2.x installed (`pip show paddleocr`), install the 3.x pin
+from requirements.txt instead of adding a version shim here -- 2.x is no
+longer a supported target.
 """
 
 import io
@@ -30,7 +59,7 @@ from app.models.ocr import BoundingBox, OcrResult, OcrToken
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = "paddleocr_pp_ocrv4"
+MODEL_NAME = "paddleocr_pp_ocrv5"
 
 
 @lru_cache(maxsize=1)
@@ -42,7 +71,18 @@ def _get_engine():
     from paddleocr import PaddleOCR
 
     logger.info("Loading PaddleOCR models (first run downloads them)")
-    return PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+    return PaddleOCR(
+        use_textline_orientation=True,
+        lang="en",
+        # Doc-orientation classification and unwarping are aimed at
+        # scanned documents/photos of pages, not a handheld shot of one
+        # product label -- skip them for speed. Nothing about the field
+        # extraction downstream (app/services/field_extraction.py,
+        # spatial_graph_extractor.py) depends on this; only genuinely
+        # rotated/warped page-like input would benefit.
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+    )
 
 
 def warm_up() -> None:
@@ -58,27 +98,46 @@ def warm_up() -> None:
         logger.exception("PaddleOCR warm-up failed; will retry on first scan")
 
 
-def _to_box(points) -> BoundingBox:
-    """PaddleOCR returns four corner points; flatten to an axis-aligned box."""
-    xs = [int(p[0]) for p in points]
-    ys = [int(p[1]) for p in points]
-    return BoundingBox(x0=min(xs), y0=min(ys), x1=max(xs), y1=max(ys))
+def _to_box(box) -> BoundingBox:
+    """
+    A "rec_boxes" entry is already [left, top, right, bottom] (see this
+    module's docstring) -- not four corner points the way 2.x's
+    per-line boxes were, so there's no min/max reduction to do here
+    beyond casting to int.
+    """
+    left, top, right, bottom = box
+    return BoundingBox(x0=int(left), y0=int(top), x1=int(right), y1=int(bottom))
 
 
 def extract_text(image_bytes: bytes) -> OcrResult:
     started = time.perf_counter()
 
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    raw = _get_engine().ocr(np.array(image), cls=True)
+
+    # .predict() returns a list with one result per input image; a
+    # single ndarray input produces a single-element list.
+    results = _get_engine().predict(np.array(image))
 
     tokens: list[OcrToken] = []
-    for line in raw or []:
-        for points, (text, confidence) in line or []:
+
+    for page in results or []:
+        texts = page.get("rec_texts") or []
+        scores = page.get("rec_scores") or []
+        boxes = page.get("rec_boxes")
+
+        # rec_boxes is a numpy array (possibly the empty-array sentinel
+        # from convert_points_to_boxes when nothing was detected on this
+        # page) -- normalise both "missing" and "empty" to an empty list
+        # so the zip below simply produces no tokens rather than raising.
+        if boxes is None or len(boxes) == 0:
+            boxes = []
+
+        for text, confidence, box in zip(texts, scores, boxes):
             tokens.append(
                 OcrToken(
                     text=text,
                     confidence=float(confidence),
-                    bbox=_to_box(points),
+                    bbox=_to_box(box),
                 )
             )
 

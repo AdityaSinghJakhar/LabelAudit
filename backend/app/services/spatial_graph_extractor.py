@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from math import sqrt
 from typing import Any
@@ -74,27 +75,75 @@ def normalize_brand(text: str) -> str:
 
 def normalize_mrp(text: str) -> str:
     """
-    Normalize common MRP representations.
-
-    Examples:
-        ₹100
-        Rs. 100
-        MRP 100
-        100/-
+    Normalize common MRP representations down to a bare numeral string,
+    so "MRP Rs. 100", "Rs. 100", "M.R.P.: 100/-" and "100" all normalize
+    to the same value and can be compared against a registry's
+    mrp_exact. Stripping only the currency marks (the previous
+    behaviour) left the "MRP"/"M.R.P" label itself in the string
+    whenever a single OCR token carried both label and value together
+    (e.g. "MRP Rs. 45.00"), which meant that value could never match a
+    bare registered price -- this is what MRP-02 looked like before this
+    fix: a real match silently scoring 0.
     """
 
     value = text.strip()
 
+    # Strip a leading MRP/M.R.P./Maximum Retail Price label, if present.
+    value = re.sub(
+        r"(?i)^\s*(?:m\.?\s?r\.?\s?p\.?|maximum\s+retail\s+price|max\s+retail\s+price)\s*[:\-]?\s*",
+        "",
+        value,
+    )
+
     value = value.replace("₹", "")
-    value = value.replace("Rs.", "")
-    value = value.replace("Rs", "")
+    value = re.sub(r"(?i)\bRs\.?\b", "", value)
+    value = re.sub(r"(?i)\bINR\b", "", value)
     value = value.replace("/-", "")
+    value = value.replace(",", "")
+
+    # If a clean numeral is present, prefer it over any leftover
+    # punctuation/whitespace -- this is what actually makes "45.00" and
+    # "45" comparable to a registry's float-valued mrp_exact.
+    match = re.search(r"[0-9]+(?:\.[0-9]+)?", value)
+    if match:
+        return match.group(0)
 
     return value.strip()
 
 
 def normalize_quantity(text: str) -> str:
-    return normalize_text(text).casefold()
+    """
+    Normalize a net-quantity declaration down to "<number> <unit>", e.g.
+    "Net Quantity 500 g" and "500 G" both normalize to "500 g", so they
+    can be compared against a registry's net_quantity string. As with
+    normalize_mrp, stripping only surrounding whitespace/case (the
+    previous behaviour) left the "net quantity" label in the string
+    whenever label and value were read as a single OCR token, which
+    meant a real quantity match would silently score 0.
+    """
+
+    value = normalize_text(text).casefold()
+
+    value = re.sub(
+        r"^(?:net\s*(?:wt\.?|weight|qty\.?|quantity|vol\.?|volume)|quantity|qty)\s*[:\-]?\s*",
+        "",
+        value,
+    )
+
+    match = re.search(
+        r"([0-9]+(?:\.[0-9]+)?)\s*(k?g|m?l|gms?|ltr|litres?)\b",
+        value,
+    )
+
+    if match:
+        number = match.group(1)
+        unit = match.group(2)
+        unit = {"gms": "g", "gm": "g", "ltr": "l", "litre": "l", "litres": "l"}.get(
+            unit, unit
+        )
+        return f"{number} {unit}"
+
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -513,6 +562,23 @@ def match_sku(
     rejection_threshold: float = 0.72,
 ):
     """
+    NOT CURRENTLY WIRED UP. An earlier, single-file version of SKU
+    matching, kept for its existing test coverage
+    (tests/test_spatial_graph_extractor.py) but superseded in the live
+    scan pipeline by app/services/registry_matcher.py's match_sku /
+    match_registry, which is what app/api/scan.py actually calls. The two
+    differ in one behaviourally important way: this version's
+    _match_score silently drops any field with no comparable registry
+    value from its weighted average (via `if not extracted_value: /
+    if sku_value is None: continue`), which does not distinguish "no
+    registry value to compare" from "compared and disagreed" the way
+    registry_matcher.py's _hungarian_match does. Do not switch the live
+    pipeline to this version without carrying that fix over -- see
+    registry_matcher.py's _hungarian_match docstring and
+    tests/test_registry_matcher.py's
+    test_hungarian_match_keeps_mismatched_field_in_evidence_and_score for
+    why it matters.
+
     Match an extracted identity against one Sku.
 
     The Hungarian algorithm is used over field-to-field assignments.
